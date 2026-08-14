@@ -2,147 +2,157 @@
 
 ## Project
 
-This repository contains **吃伴 (Chiban)**, a mobile-first shared diet-control MVP for small private groups.
+**吃伴 (Chiban)** is a mobile-first private-group meal recording and social interaction MVP.
 
-Claude Code should treat the following as the primary project references:
+Before changing product behavior, read:
 
-1. `CLAUDE.md` — Claude-specific operating guidance.
-2. `AGENTS.md` — repository-wide engineering rules.
-3. `docs/MVP_SPEC.md` — authoritative MVP product and technical specification.
-4. Existing migrations, tests, code, and README — current implementation state.
+- [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md) — authoritative V0.1 product and technical scope.
+- [`AGENTS.md`](AGENTS.md) — repository-wide engineering constraints.
 
-If the current user task conflicts with repository documentation, follow the explicit current task and clearly note the intentional deviation when it changes product behavior, architecture, API contracts, or schema.
+If current task instructions explicitly revise the spec, implement the requested change and update the relevant documentation in the same change.
 
----
+## V0.1 objective
 
-## Core product idea
-
-The product is not a generic calorie tracker. It is a private-group diet accountability tool.
-
-The core loop is:
+V0.1 validates:
 
 ```text
-Eat
-→ Record meal
-→ See daily calorie impact
-→ Share meal to group chat
-→ Friends react / reply
+Record meal
+→ Share to group
+→ Friends see it realtime
+→ Reply / React / GIF / Sticker
 → Social accountability
-→ Influence next meal
 → Record again
 ```
 
-The key data-model principle is:
+Do not turn V0.1 into a calorie tracker.
 
-> Record once, share automatically.
+## V0.1 includes
 
-`MealRecord` is primary data. A meal-type `ChatMessage` references the meal through `meal_record_id`; it must not copy meal calories, descriptions, or image URLs into chat storage.
+- email/password authentication
+- basic profile: display name, avatar, timezone
+- private groups and invite links/codes
+- meal recording with 1–4 photos
+- meal time, optional meal type and note
+- Today / history views without calorie calculation
+- meal sharing to groups
+- realtime WebSocket chat
+- reply and reaction
+- chat image upload
+- GIF upload/render
+- user-created stickers, including GIF stickers
+- PostgreSQL
+- fake-gcs-server
+- Next.js frontend
+- Go modular-monolith backend
+- Docker Compose deployment on a Mac mini
 
----
+## Not V0.1
 
-## Before making changes
+Do not implement unless the requirement is explicitly updated:
 
-Before editing code:
+- BMR / TDEE
+- calories / macros
+- weight tracking
+- AI food or calorie analysis
+- Apple Health / Health Connect
+- push notifications
+- public feeds or follow systems
+- GIF search providers such as GIPHY/Tenor
+- image timestamp watermarks
+- Redis / Kafka / queues
+- microservices / Kubernetes
+- CDN / signed URLs
 
-1. Read the relevant sections of `docs/MVP_SPEC.md`.
-2. Read `AGENTS.md`.
-3. Inspect existing code in the affected module.
-4. Inspect relevant tests and migrations.
-5. Check whether the requested behavior already exists before adding parallel implementations.
+## Critical domain invariants
 
-Do not generate a second architecture alongside an existing one.
+### Meal is primary data
 
-Do not rewrite unrelated code just because an alternative style is possible.
+A `MealRecord` exists independently of chat.
 
----
+A meal chat message references `meal_record_id`; do not copy meal description, media paths, or future nutrition fields into durable chat-message fields.
 
-## Architecture
+### Sharing is explicit
 
-Use a **modular monolith**.
+Use `meal_group_shares` as the source of truth for whether a meal is shared with a group.
 
-Target structure:
+Do not infer visibility solely from the existence of a chat message.
+
+### Replies are chat messages
+
+Do not create a separate comments domain. Use `reply_to_message_id`.
+
+### Chat retries are idempotent
+
+Messages must carry a client-generated `client_message_id`. Persist before broadcasting and prevent duplicate inserts on retry.
+
+### Timezone matters
+
+Persist timestamps as `timestamptz` / UTC and use the profile IANA timezone for Today/history grouping.
+
+### Deleted content preserves conversation context
+
+Meal and message deletions should use the soft-delete/tombstone behavior described in the spec. Do not cascade-delete reply threads.
+
+## Media rules
+
+All object storage goes through the Go backend storage abstraction.
+
+The frontend must never use fake-GCS bucket names, internal object paths, or internal storage URLs as durable identifiers.
+
+Use application IDs such as:
 
 ```text
-apps/web        Next.js + TypeScript
-apps/api        Go
-migrations      PostgreSQL migrations
-docs            specifications
+image_id
+media_id
+sticker_id
 ```
 
-Backend domain areas:
+For protected media reads:
+
+```text
+Browser
+→ Go API
+→ authentication
+→ authorization
+→ fake GCS
+→ stream
+```
+
+Never accept arbitrary object paths from the browser for proxy reads.
+
+Static images should be validated, size-limited, dimension-limited, and stripped of EXIF/GPS metadata. GIFs must preserve animation.
+
+Do not add image time watermarks in V0.1.
+
+## Storage consistency
+
+PostgreSQL and fake GCS are separate systems.
+
+When an upload succeeds but DB persistence fails, perform best-effort object cleanup. Do not share/publish an incomplete Meal. Keep the implementation simple; no queue is required for V0.1.
+
+## Backend style
+
+Use a modular monolith, not microservices.
+
+Expected domains include:
 
 ```text
 auth
 user
 profile
-goal
-tdee
-weight
 group
 meal
 chat
+media
+sticker
 storage
 ```
 
-Runtime for the MVP:
+Keep HTTP handlers thin. Put business logic in application/domain services. Keep storage and persistence concerns behind clear boundaries consistent with the existing code.
 
-```text
-Mac mini
-Docker Compose
-Next.js
-Go API / WebSocket
-PostgreSQL
-fake-gcs-server
-Cloudflare Tunnel
-```
+Use `context.Context` for request-driven Go operations. Preserve useful error context without leaking internal details to API clients.
 
-Do not introduce microservices, Kubernetes, Redis, Kafka, or queue infrastructure for the MVP unless explicitly requested.
-
----
-
-## How to make implementation decisions
-
-Use this priority order:
-
-1. Correctness and authorization.
-2. MVP scope.
-3. Simplicity and reversibility.
-4. Testability.
-5. Performance appropriate for a small private-group MVP.
-6. Future scalability only where it does not materially complicate the MVP.
-
-Avoid speculative abstractions.
-
-A useful abstraction is one that isolates a known infrastructure boundary, such as object storage. A speculative abstraction created for hypothetical future providers or services should generally be avoided.
-
----
-
-## Go backend guidance
-
-Keep HTTP transport, application logic, persistence, and infrastructure responsibilities distinguishable.
-
-Handlers should primarily:
-
-- decode requests;
-- perform transport-level validation;
-- call an application/service operation;
-- map known errors to HTTP responses.
-
-Do not put TDEE formulas, group membership policy, meal sharing rules, or storage authorization directly inside HTTP handlers.
-
-Prefer explicit domain/application types.
-
-Pass `context.Context` through request-scoped operations.
-
-Wrap errors with enough context to diagnose the operation without exposing sensitive data to API clients.
-
-Use transactions where a logical operation must remain atomic. In particular, consider transaction boundaries when creating records that must remain consistent, such as a meal and its associated share/message metadata.
-
-Do not build distributed transaction machinery for the MVP.
-
----
-
-## Next.js frontend guidance
+## Frontend style
 
 The UI is mobile-first.
 
@@ -155,283 +165,76 @@ Groups
 Me
 ```
 
-Meal recording is a distinct structured workflow; do not turn the chat composer into the primary meal-entry form.
+Meal recording is a dedicated primary action. Do not make users enter structured meal data through the normal chat text field.
 
-Group chat should display meal records as structured message cards.
-
-Frontend rules:
-
-- Do not expose or depend on fake-GCS internal URLs or object paths.
-- Use application-level IDs for images and resources.
-- Treat server authorization as authoritative.
-- Avoid reproducing backend business rules as independent sources of truth.
-- Use client-side previews only where useful, while server results remain authoritative.
-- Maintain accessibility for forms, navigation, buttons, dialogs, keyboard focus, and mobile layouts.
-
----
-
-## TDEE implementation
-
-MVP uses the **Mifflin–St Jeor** formula and activity factors specified in `docs/MVP_SPEC.md`.
-
-Do not substitute a different formula without an intentional specification change.
-
-Requirements:
-
-- calculate on the backend;
-- return/display TDEE as an estimate;
-- persist calculation inputs;
-- persist `formula` and `formula_version`;
-- preserve historical calculations;
-- recalculate on specified profile/goal changes;
-- cover male/female formula branches, activity factors, goal adjustment, and representative edge cases with tests.
-
-Avoid using only a mutable `tdee` column as the sole record of calculation history.
-
----
-
-## Authentication and authorization
-
-Authentication is email/password for the MVP.
-
-Never store plaintext passwords.
-
-Use the established password hashing implementation (Argon2id or bcrypt).
-
-Do not trust client-provided user IDs for ownership.
-
-Every protected operation must derive the authenticated user from the session/auth context.
-
-Authorization examples:
-
-- user may edit/delete only their own meals;
-- group chat requires group membership;
-- joining WebSocket rooms requires membership validation;
-- meal-image reads require permission to view the related meal;
-- reactions/replies require access to the referenced message/group.
-
-Security checks must be enforced in backend operations even if the UI also hides unauthorized controls.
-
----
-
-## Image storage
-
-The MVP uses `fake-gcs-server` as object storage.
-
-Storage must remain behind an application/backend abstraction.
-
-Browser-facing read flow:
+Keep the fastest valid record flow close to:
 
 ```text
-Browser
-→ GET /api/v1/meal-images/{image_id}
-→ Go authenticates user
-→ Go checks meal/group authorization
-→ Go resolves bucket/object internally
-→ Go reads from fake GCS
-→ Go streams image
+Take/select photo → Publish
 ```
 
-Do not implement endpoints that accept arbitrary GCS paths from the browser.
+## Authorization checklist
 
-Do not expose the fake-GCS service publicly.
+Always check backend authorization for:
 
-The storage volume must persist across container recreation.
+- joining/reading/sending in a group
+- WebSocket group subscription
+- meal edit/delete/read/share
+- meal-image read
+- reply/reaction operations
+- sticker/media mutations
 
-Future signed URLs or real GCS are out of MVP scope unless explicitly requested.
+Never rely on frontend state or client-supplied user IDs for authorization.
 
----
+## Database
 
-## Meal/chat consistency
+PostgreSQL only for V0.1 relational data.
 
-Meal creation and social sharing are related but distinct concepts.
+All schema changes use migrations. Prefer DB constraints for real invariants such as unique group membership, meal shares, and reactions.
 
-A meal may exist without being shared.
-
-When shared to a group, create a chat message that references the meal:
-
-```text
-message_type = meal
-meal_record_id = <meal id>
-```
-
-Never copy the mutable meal fields into the chat record merely for rendering convenience.
-
-Do not implement a separate comment table for meal discussions.
-
-Replies use:
-
-```text
-reply_to_message_id
-```
-
-Reactions attach to chat messages.
-
----
-
-## PostgreSQL and migrations
-
-Use PostgreSQL for MVP relational data.
-
-Every schema change must be represented by a migration.
-
-Use constraints to protect invariants where practical:
-
-- foreign keys;
-- ownership relations;
-- unique group membership where applicable;
-- unique reaction tuple as specified;
-- required fields and sensible nullability.
-
-Do not add MongoDB, Redis, Elasticsearch, or another persistence layer for MVP convenience.
-
-Do not store image binaries in PostgreSQL.
-
----
-
-## Realtime chat
-
-MVP realtime chat uses the Go process and WebSockets.
-
-Expected flow:
-
-```text
-Client sends message
-→ backend validates membership/input
-→ persist message
-→ broadcast to connected members of the group room
-```
-
-A single-node in-memory WebSocket hub is acceptable for the MVP.
-
-Do not add Redis Pub/Sub or multi-node coordination until the runtime actually needs multiple API instances.
-
-WebSocket connections must authenticate and authorize before joining a room.
-
----
+Do not add speculative future nutrition columns to `meal_records` just because TDEE/calorie work is planned later.
 
 ## Testing expectations
 
-Changes are not complete merely because the code compiles.
+Add/update tests when behavior changes.
 
-For relevant changes:
+Prioritize tests around:
 
-- add/update unit tests;
-- add API/database integration tests where appropriate;
-- add a regression test for bugs;
-- run relevant test suites;
-- run formatting/lint/type-checking for changed code.
+- authentication/session handling
+- group membership/invites
+- meal ownership/sharing
+- media authorization
+- timezone grouping
+- WebSocket authentication and persistence-before-broadcast
+- chat retry idempotency
+- reply/reaction integrity
+- upload failure cleanup
 
-Critical behavior to cover thoroughly:
+Run the relevant Go and web formatting/lint/type/test commands before considering work complete.
 
-```text
-TDEE calculations
-auth/session
-meal ownership
-group membership
-image authorization
-meal sharing → chat message
-reply/reaction integrity
-WebSocket membership and broadcasts
-```
+## Change discipline
 
-Tests must remain runnable without production credentials or paid external services.
+For a task:
 
----
+1. Inspect relevant files before editing.
+2. Make the smallest coherent change.
+3. Do not broaden scope unless required.
+4. Preserve existing domain boundaries.
+5. Add tests for changed behavior.
+6. Update docs/env examples if behavior/setup changes.
+7. Report what changed and any known limitation.
 
-## Documentation
+Do not silently change API contracts, schema semantics, or MVP scope.
 
-Update documentation when changing:
+## Phase order
 
-- environment variables;
-- Docker services;
-- startup commands;
-- API contracts;
-- architecture decisions;
-- TDEE rules;
-- database behavior;
-- MVP scope.
+Unless the task says otherwise:
 
-Do not leave `docs/MVP_SPEC.md` describing behavior that the implementation intentionally changed without also updating the specification.
-
----
-
-## Environment and secrets
-
-Never commit:
-
-- passwords;
-- API secrets;
-- production session keys;
-- Cloudflare tunnel secrets;
-- database credentials intended to remain private.
-
-Keep `.env.example` synchronized with required configuration and use placeholder values.
-
-Do not expose PostgreSQL or fake GCS publicly.
-
----
-
-## Scope guardrails
-
-Unless explicitly requested, do not implement:
-
-```text
-AI meal recognition
-AI calorie estimation
-health-platform integrations
-push notifications
-native mobile apps
-public social network features
-friends/follows
-leaderboards
-achievements
-payments
-subscriptions
-nutritionist portals
-Redis
-Kafka
-microservices
-Kubernetes
-CDN
-signed URLs
-```
-
-If a task appears to require one of these, first verify whether it is truly necessary to satisfy the requested behavior or whether the existing MVP architecture can solve it more simply.
-
----
-
-## Working style for Claude Code
-
-When given a development task:
-
-1. Inspect before editing.
-2. State internally the files/modules that actually need changes; avoid broad repository churn.
-3. Implement the smallest coherent solution.
-4. Preserve domain boundaries.
-5. Add tests alongside behavior.
-6. Run relevant verification commands.
-7. Review the diff for unintended changes.
-8. Update docs when required.
-9. Summarize implementation, verification performed, and remaining caveats.
-
-When multiple valid approaches exist, prefer the one that is easiest to understand and remove later.
-
-Do not leave placeholder implementations, TODO-only handlers, fake success responses, or silently skipped authorization in work presented as complete.
-
----
-
-## Development order
-
-Unless the current task explicitly changes priority, follow:
-
-1. Infrastructure / repository skeleton
-2. Authentication
-3. Profile / Goal / Weight / TDEE
-4. Meal records and image storage
-5. Groups
-6. Chat / WebSocket / Reply / Reaction
-7. Meal-to-chat social sharing
-8. Today page / calorie summary
-
-Refer to `docs/MVP_SPEC.md` for acceptance criteria and the complete MVP Definition of Done.
+1. Infrastructure
+2. Authentication + Basic Profile
+3. Group + Invite
+4. Meal + Photo
+5. Chat Core
+6. Meal Sharing
+7. Chat Media + GIF + Sticker
+8. UX Polish / MVP Validation
