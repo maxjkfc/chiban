@@ -1,121 +1,160 @@
-# 共同飲控系統 MVP 需求與技術規格
+# 吃伴（Chiban）V0.1 MVP 需求與技術規格
 
 ## 1. 文件目的
 
-本文件用於定義「共同飲控系統」第一版 MVP 的產品需求、系統邊界、資料模型、API、權限規則與開發順序，作為後續 Codex 開發的主要依據。
+本文件定義「吃伴」V0.1 MVP 的產品需求、系統邊界、資料模型、API、權限規則與開發順序，作為 Codex / Claude Code 與人工開發的主要依據。
 
-MVP 的首要目標不是做一套完整的營養管理平台，而是驗證以下核心假設：
+V0.1 不以熱量計算或完整飲食管理為目標，而是驗證：
 
-> 一群朋友共同記錄飲食，透過聊天室互相回覆、鼓勵、吐槽與監督，是否能提升飲食記錄與飲食控制的持續性。
+> 一群朋友共同記錄飲食，透過群組分享、回覆、Reaction、GIF 與自訂貼圖互動，是否能提升持續記錄與共同飲控的動機。
 
 ---
 
-# 2. 產品定位
+# 2. V0.1 產品定位
 
-共同飲控系統是一個小型封閉社群的飲食紀錄與共同監督工具。
+吃伴是一個小型、封閉群組的飲食紀錄與社交互動工具。
 
-每位使用者可以：
+核心 Loop：
 
-1. 建立帳號與個人身體資料
-2. 計算預估 BMR / TDEE / 每日熱量目標
-3. 記錄每日每一餐
-4. 上傳餐點照片
-5. 將餐點紀錄自動分享至群組聊天室
-6. 對朋友的餐點紀錄進行 Reaction / Reply
-7. 使用一般聊天室進行文字聊天
-8. 查看自己每天的飲食紀錄、熱量與剩餘額度
+```text
+吃東西
+↓
+快速拍照記錄
+↓
+自動分享至指定群組
+↓
+朋友看到
+↓
+Reaction / Reply / GIF / 貼圖 / 聊天
+↓
+形成陪伴與社交監督
+↓
+下一餐再次記錄
+```
 
-核心概念：
+核心原則：
 
 > Record once, share automatically.
 
-飲食資料只建立一次，聊天室只引用 MealRecord，不複製飲食資料。
+`MealRecord` 是飲食的 Primary Data。聊天室只引用 Meal，不複製 Meal 的內容或圖片路徑。
 
 ---
 
-# 3. MVP 核心使用流程
+# 3. V0.1 要驗證的問題
 
-## 3.1 首次使用
+第一版主要回答：
+
+1. 使用者是否願意每天快速拍照記錄飲食？
+2. 分享到私人群組後，朋友是否會實際互動？
+3. Reply / Reaction / GIF / 自訂貼圖是否會增加回訪與記錄頻率？
+4. 「一起記錄」是否比個人飲食日誌更有持續性？
+
+V0.1 不驗證：
+
+- 熱量計算是否準確
+- TDEE 是否準確
+- AI 食物辨識是否準確
+- 營養建議是否有效
+
+---
+
+# 4. V0.1 核心使用流程
+
+## 4.1 透過邀請加入
+
+推薦的首次使用流程：
+
+```text
+朋友收到群組邀請連結
+↓
+開啟吃伴
+↓
+註冊 / 登入
+↓
+設定暱稱
+↓
+頭像（可略過）
+↓
+自動完成加入群組
+↓
+開始記錄
+```
+
+亦可：
 
 ```text
 註冊
 ↓
-登入
-↓
 建立 Profile
 ↓
-輸入身高 / 體重 / 性別 / 年齡
+建立群組
 ↓
-選擇活動程度
-↓
-選擇飲食目標
-↓
-系統計算 BMR / TDEE / 每日熱量目標
-↓
-加入或建立群組
-↓
-進入首頁
+分享邀請連結 / 邀請碼
 ```
 
-## 3.2 每日飲食紀錄
+第一版 onboarding 不要求身高、體重、性別、TDEE 或飲控目標。
+
+## 4.2 記錄飲食
 
 ```text
 點擊「記錄」
 ↓
-拍攝 / 選擇餐點照片
+拍照 / 選擇照片
 ↓
-輸入餐別
+確認時間（預設現在）
 ↓
-輸入餐點描述
+餐別（optional）
 ↓
-輸入或估算熱量
+文字備註（optional）
 ↓
-設定時間
+選擇分享群組
 ↓
-選擇是否分享至群組
-↓
-建立 MealRecord
-↓
-照片存入 Object Storage
-↓
-自動建立 Meal ChatMessage
-↓
-群組成員即時看到
+發布
 ```
 
-## 3.3 群組互動
+目標：最短流程應能做到：
 
 ```text
-朋友看到 Meal Message
+拍照 → 發布
+```
+
+## 4.3 分享與聊天室
+
+```text
+建立 MealRecord
 ↓
-Reaction
-or
-Reply
-or
-一般文字聊天
+建立 MealGroupShare
 ↓
-原使用者收到聊天室內容
+建立 meal 類型 ChatMessage
+↓
+WebSocket broadcast
+↓
+群組成員即時看到
+↓
+Reaction / Reply / GIF / Sticker / 一般聊天
 ```
 
 ---
 
-# 4. MVP 功能範圍
+# 5. Authentication
 
-## 4.1 Authentication
+V0.1：
 
-必要功能：
-
-- 註冊
+- Email + Password 註冊
 - 登入
 - 登出
 - Session 驗證
-- Password hash
-- API Authentication middleware
+- Authentication middleware
 
-第一版登入方式：
+Password 不得明文儲存，使用 Argon2id 或 bcrypt。
 
-- Email
-- Password
+Session Cookie 應使用適當的：
+
+```text
+HttpOnly
+Secure（公開 HTTPS 環境）
+SameSite
+```
 
 暫不實作：
 
@@ -126,174 +165,50 @@ or
 
 ---
 
-# 5. 使用者 Profile
+# 6. User / Profile
 
-## 5.1 Profile 欄位
+V0.1 Profile 保持極簡：
 
 ```text
+profiles
+--------
+user_id
 display_name
-avatar
-gender
-birthday
-height_cm
-current_weight_kg
-```
-
-## 5.2 Goal
-
-```text
-goal_type
-
-lose_weight
-maintain
-gain_weight
-```
-
-其他欄位：
-
-```text
-target_weight_kg
-activity_level
-daily_calorie_target
-```
-
----
-
-# 6. BMR / TDEE
-
-第一版使用 Mifflin-St Jeor Equation。
-
-## 男性
-
-```text
-BMR =
-10 × weight_kg
-+ 6.25 × height_cm
-- 5 × age
-+ 5
-```
-
-## 女性
-
-```text
-BMR =
-10 × weight_kg
-+ 6.25 × height_cm
-- 5 × age
-- 161
-```
-
-## Activity Factor
-
-```text
-sedentary          1.2
-light              1.375
-moderate           1.55
-active             1.725
-very_active        1.9
-```
-
-## TDEE
-
-```text
-TDEE = BMR × activity_factor
-```
-
-## Daily Calorie Target
-
-第一版：
-
-```text
-maintain:
-TDEE
-
-lose_weight:
-TDEE × 0.85
-
-gain_weight:
-TDEE × 1.10
-```
-
-系統 UI 必須使用：
-
-> 預估 TDEE
-
-不可將 TDEE 顯示為精確消耗。
-
----
-
-# 7. TDEE Calculation History
-
-不要只在 profile 存最終 TDEE。
-
-需要保留計算歷史。
-
-```text
-tdee_calculations
------------------
-id
-user_id
-
-weight_kg
-height_cm
-age
-gender
-
-activity_level
-activity_factor
-
-formula
-formula_version
-
-bmr
-tdee
-
-goal_type
-goal_adjustment
-daily_calorie_target
-
-calculated_at
-```
-
-第一版：
-
-```text
-formula = mifflin_st_jeor
-formula_version = 1
-```
-
-當使用者修改：
-
-- 體重
-- 身高
-- 活動程度
-- 目標
-
-重新產生 calculation record。
-
----
-
-# 8. Weight Record
-
-需要獨立保留體重歷史。
-
-```text
-weight_records
---------------
-id
-user_id
-weight_kg
-recorded_at
+avatar_media_id nullable
+timezone
 created_at
+updated_at
 ```
 
-Profile 的 current_weight 可以作為目前快取值。
+`timezone` 必須保留，例如：
+
+```text
+Asia/Taipei
+Asia/Tokyo
+```
+
+所有 DB timestamp 使用 timezone-aware timestamp（PostgreSQL `timestamptz`），資料庫以 UTC 保存，使用者看到的「今天」與 meal 日期依使用者 timezone 計算。
+
+## 6.1 Profile 隱私
+
+群組可見：
+
+- display_name
+- avatar
+
+V0.1 不收集也不公開：
+
+- 身高
+- 體重
+- 性別
+- TDEE
+- 每日熱量目標
 
 ---
 
-# 9. Group
+# 7. Group
 
-系統為封閉群組，而不是公開社群。
+系統是私人群組，不是公開社群。
 
 ```text
 groups
@@ -305,8 +220,6 @@ created_at
 updated_at
 ```
 
-群組成員：
-
 ```text
 group_members
 -------------
@@ -316,49 +229,60 @@ role
 joined_at
 ```
 
-Role 第一版：
+Role：
 
 ```text
 owner
 member
 ```
 
-MVP 支援：
+一位使用者可以加入多個 Group。
 
-- 建立群組
-- 產生邀請碼
-- 使用邀請碼加入群組
-- 查看群組成員
+## 7.1 Group Invite
 
-第一版可以限制：
+```text
+group_invites
+-------------
+id
+group_id
+code
+created_by
+expires_at
+revoked_at
+created_at
+```
 
-> 一位 User 可以加入多個 Group。
+V0.1 規則：
+
+- 邀請預設 7 天失效
+- owner 可 revoke
+- 同一邀請可多人使用
+- 已登入使用者可直接加入
+- 未登入者完成註冊後應回到原本 invite flow 並加入群組
+
+## 7.2 Ownership
+
+Owner 不可在未轉移 ownership 的情況下直接離開群組。
+
+V0.1 至少需要保證群組不會進入沒有 owner 的狀態。
 
 ---
 
-# 10. Meal Record
+# 8. Meal Record
 
-MealRecord 是產品最重要的 Primary Data。
+`MealRecord` 是產品的核心 Primary Data。
 
 ```text
 meal_records
 ------------
 id
 user_id
-
-meal_type
+meal_type nullable
 eaten_at
-
-description
-
-estimated_calories
-protein_g
-carbs_g
-fat_g
-
+description nullable
 created_at
 updated_at
-deleted_at
+deleted_at nullable
 ```
 
 Meal Type：
@@ -371,111 +295,120 @@ snack
 other
 ```
 
-MVP nutrition：
+V0.1：
 
 必填：
 
-```text
-meal_type
-eaten_at
-```
+- 至少一張 Meal Photo
+- eaten_at（預設現在）
 
 選填：
 
-```text
-description
-estimated_calories
-protein_g
-carbs_g
-fat_g
-```
+- meal_type
+- description
 
-第一版不要求 AI 自動辨識。
+不要求：
+
+- calories
+- protein
+- carbs
+- fat
+- serving size
+- AI analysis
 
 ---
 
-# 11. Meal Photo
+# 9. Meal Photo
 
-每筆 Meal 可以有多張圖片。
-
-第一版限制建議：
-
-```text
-1 ~ 4 images / meal
-```
-
-Table：
+每筆 Meal 支援 1～4 張照片。
 
 ```text
 meal_photos
 -----------
 id
 meal_record_id
-
 bucket
 object_name
-
 content_type
 size_bytes
 sort_order
-
 created_at
 ```
 
 Database 不存 binary。
 
+## 9.1 圖片處理
+
+V0.1 至少要做到：
+
+- 驗證實際可解碼的圖片格式，不只相信副檔名/MIME header
+- 限制檔案大小
+- 限制最大尺寸
+- 一般圖片可 resize / 壓縮
+- 移除 EXIF / GPS metadata
+- 不產生時間浮水印
+
+**飲食圖片時間浮水印明確不屬於 V0.1。**
+
 ---
 
-# 12. Object Storage
+# 10. Object Storage
 
-目前 MVP 使用：
+V0.1 使用：
 
 > fake-gcs-server
 
 運行於 Mac mini Docker 環境。
 
-Bucket：
+建議 buckets / namespaces：
 
 ```text
 meal-images
+avatars
+chat-media
+user-stickers
 ```
 
-推薦 Object Path：
+Meal object path 可採：
 
 ```text
-users/{user_id}/meals/{year}/{month}/{uuid}.webp
+users/{user_id}/meals/{year}/{month}/{uuid}.{ext}
 ```
 
-例如：
+前端不得依賴：
 
-```text
-users/01ABC/meals/2026/08/550e8400.webp
-```
+- bucket
+- object_name
+- fake-GCS URL
 
-前端不可依賴：
-
-```text
-bucket
-object_name
-fake-gcs URL
-```
-
-Frontend 只認：
+Frontend 只認 application-level ID，例如：
 
 ```text
 image_id
+media_id
+sticker_id
+```
+
+Backend 使用 storage abstraction，例如：
+
+```go
+type ObjectStorage interface {
+    Upload(...)
+    Delete(...)
+    Open(...)
+}
 ```
 
 ---
 
-# 13. Image Authorization
+# 11. 圖片存取權限
 
-第一版圖片讀取：
+V0.1 圖片讀取：
 
 ```text
 Browser
 ↓
-GET /api/meal-images/{image_id}
+GET application media endpoint
 ↓
 Go API
 ↓
@@ -485,102 +418,117 @@ Authorization
 ↓
 fake GCS
 ↓
-Go stream image
+Go stream
 ↓
 Browser
 ```
 
-Go 負責圖片存取權限。
+fake GCS 不直接公開給 browser。
 
-不可直接公開 fake GCS bucket。
-
-不可讓前端直接指定 object path，例如：
-
-```text
 禁止：
 
-GET /images?path=xxx
+```text
+GET /images?path=users/xxx/secret.webp
 ```
 
-必須：
+允許：
 
 ```text
-GET /api/meal-images/{image_id}
+GET /api/v1/meal-images/{image_id}
 ```
 
-Server 自行根據 image_id 查詢：
+Server 根據 `image_id` 自行解析 storage object 並檢查權限。
 
-```text
-MealPhoto
-↓
-MealRecord
-↓
-User / Group authorization
-↓
-bucket + object_name
-```
-
-未來可以改：
-
-```text
-Go authorization
-↓
-Signed URL
-↓
-Browser → GCS
-```
-
-但不屬於 MVP。
+Signed URL 不屬於 V0.1。
 
 ---
 
-# 14. 飲食分享機制
+# 12. Meal 分享關係
 
-建立 MealRecord 時：
+分享權限不可只靠 ChatMessage 反推。
+
+新增正式 relationship：
 
 ```text
-share_to_group_ids[]
+meal_group_shares
+-----------------
+meal_record_id
+group_id
+shared_at
+revoked_at nullable
 ```
 
-如果使用者選擇分享至 Group：
-
-系統建立 ChatMessage：
+Unique：
 
 ```text
+(meal_record_id, group_id)
+```
+
+用途：
+
+- 表示 Meal 是否分享給某 Group
+- 作為 meal / meal image authorization 的重要依據
+- ChatMessage 只是該分享內容在聊天室中的呈現
+
+建立分享後，建立：
+
+```text
+ChatMessage
 message_type = meal
 meal_record_id = {meal_id}
 ```
 
-ChatMessage 只引用 MealRecord。
+ChatMessage 不複製：
 
-禁止複製：
-
-```text
-meal description
-calories
-photo URL
-```
-
-到 ChatMessage。
-
-避免資料不同步。
+- Meal description
+- photo URL / object path
+- 其他 Meal fields
 
 ---
 
-# 15. Chat Room
+# 13. Meal / Photo 建立一致性
 
-每個 Group 對應一個聊天室。
+Object Storage 與 PostgreSQL 無法共用同一個 transaction，因此必須明確處理 partial failure。
 
-第一版 Message Type：
+建議流程：
+
+```text
+建立 Meal
+↓
+上傳圖片至 fake GCS
+↓
+建立 MealPhoto metadata
+↓
+全部圖片成功
+↓
+建立 MealGroupShare + Meal ChatMessage
+↓
+commit / publish
+```
+
+若 storage 已成功但 DB metadata 寫入失敗：
+
+- best-effort 刪除已上傳 object
+- 不可留下對使用者可見的不完整 Meal
+
+應預留 orphan object cleanup 的能力；V0.1 可先以簡單 maintenance script / job 實作，不需 message queue。
+
+---
+
+# 14. Chat
+
+每個 Group 有一個聊天室語意。
+
+V0.1 Message Type：
 
 ```text
 text
 meal
 image
+gif
+sticker
 system
 ```
-
-Table：
 
 ```text
 chat_messages
@@ -588,56 +536,43 @@ chat_messages
 id
 group_id
 user_id
-
 message_type
-
-content
-meal_record_id
-
-reply_to_message_id
-
+content nullable
+meal_record_id nullable
+chat_media_id nullable
+sticker_id nullable
+reply_to_message_id nullable
+client_message_id
 created_at
 updated_at
-deleted_at
+deleted_at nullable
+```
+
+`client_message_id` 由 client 產生 UUID，用於重送 idempotency。
+
+建議 unique：
+
+```text
+(user_id, client_message_id)
 ```
 
 ---
 
-# 16. Reply
+# 15. Reply
 
-所有聊天室訊息都可以被 Reply。
+不建立 Comment subsystem。
 
-使用：
+對 Meal 的留言本質為 Chat Reply：
 
 ```text
 reply_to_message_id
 ```
 
-例如：
-
-```text
-Meal Message
-↑
-Reply Message
-```
-
-不另外建立 Comment table。
-
-核心原則：
-
-> Comment 與 Chat 不拆成兩套系統。
-
-針對飲食的評論本質為：
-
-```text
-Reply to Meal ChatMessage
-```
+任何可回覆的訊息都使用同一機制。
 
 ---
 
-# 17. Reaction
-
-Table：
+# 16. Reaction
 
 ```text
 message_reactions
@@ -648,33 +583,102 @@ reaction_type
 created_at
 ```
 
-Unique constraint：
+Unique：
 
 ```text
-message_id
-user_id
-reaction_type
+(message_id, user_id, reaction_type)
 ```
 
-第一版 Reaction：
+V0.1 至少支援：
 
 ```text
-❤️
-😂
-🔥
-👏
-👀
+❤️ 😂 🔥 👏 👀
 ```
-
-後續可增加飲控專屬 Reaction。
 
 ---
 
-# 18. Realtime Chat
+# 17. Chat Image / GIF
 
-第一版使用 Go WebSocket。
+聊天室可直接傳送：
 
-架構：
+- 靜態圖片
+- GIF
+
+```text
+chat_media
+----------
+id
+user_id
+media_type
+bucket
+object_name
+content_type
+size_bytes
+created_at
+deleted_at nullable
+```
+
+`media_type`：
+
+```text
+image
+gif
+```
+
+GIF 必須保留動畫，不可在一般圖片處理流程中被轉成單張靜態 WebP。
+
+V0.1 不串接 GIPHY / Tenor 搜尋 API。
+
+---
+
+# 18. 自訂 Sticker
+
+使用者可以上傳並保存自己的貼圖。
+
+Sticker 可為：
+
+```text
+image
+gif
+```
+
+```text
+user_stickers
+-------------
+id
+user_id
+name nullable
+media_type
+bucket
+object_name
+content_type
+size_bytes
+created_at
+deleted_at nullable
+```
+
+V0.1 支援：
+
+- 新增自己的 Sticker
+- 查看「我的貼圖」
+- 在聊天室傳送 Sticker
+- GIF 可作為 Sticker
+
+聊天室的 sticker message 只 reference `sticker_id`，不複製 storage URL。
+
+可後續再考慮：
+
+- 從別人的 GIF / Sticker 收藏到自己的貼圖
+- Sticker pack
+- GIF provider 搜尋
+
+上述不列為第一輪必做。
+
+---
+
+# 19. Realtime Chat
+
+V0.1 使用 Go WebSocket。
 
 ```text
 Browser
@@ -683,99 +687,110 @@ WebSocket
 ↓
 Go API
 ↓
-Chat Hub
+Group Chat Hub
 ↓
-Group connection pool
+Group members
 ```
 
-一個 Group 對應一個 broadcast room。
-
-流程：
+Send flow：
 
 ```text
-Client A
+Client
 ↓
-send message
+client_message_id
 ↓
-Go
+Go 驗證 group membership
 ↓
-DB INSERT
+DB INSERT（或命中既有 idempotent message）
 ↓
-broadcast
-↓
-Client B / C / D
+broadcast persisted message
 ```
 
-MVP 不需要：
+V0.1 不需要：
 
 - Redis Pub/Sub
 - Kafka
 - Message Queue
-- 多節點 websocket
+- 多節點 WebSocket
 - typing indicator
 - read receipt
 - online presence
 
 ---
 
-# 19. 今日頁面
+# 20. Chat History Pagination
 
-首頁之一：
+不可設計成永久一次讀取全部聊天室訊息。
 
-```text
-今日目標
-2300 kcal
-
-已攝取
-1520 kcal
-
-剩餘
-780 kcal
-```
-
-並列出：
+V0.1 使用 cursor pagination，例如：
 
 ```text
-早餐
-午餐
-晚餐
-點心
+GET /api/v1/groups/{group_id}/messages?before={cursor}&limit=30
 ```
 
-計算：
-
-```text
-daily_consumed =
-SUM(meal_records.estimated_calories)
-WHERE eaten_at = today
-```
-
-```text
-remaining =
-daily_calorie_target - daily_consumed
-```
+Cursor 需有 deterministic ordering，不要只依賴可能相同的 `created_at`；可使用 `(created_at, id)` 或等價穩定方案。
 
 ---
 
-# 20. 歷史紀錄
+# 21. Delete Semantics
 
-第一版支援：
+## 21.1 Meal
 
-- 按日期查看 Meal
+Meal 採 soft delete：
+
+```text
+deleted_at
+```
+
+Meal 被刪除後：
+
+- 不再出現在個人飲食紀錄
+- 已存在的聊天室上下文不 cascade 全刪
+- Meal message 可顯示 tombstone，例如「此飲食紀錄已刪除」
+- Reply chain 保留
+
+## 21.2 Chat Message
+
+訊息刪除後保留必要 thread 結構，顯示 tombstone，不應因 parent delete 導致整串回覆消失。
+
+---
+
+# 22. Today / 飲食歷史
+
+V0.1 的 Today 頁面不顯示熱量。
+
+範例：
+
+```text
+今天
+
+已記錄 3 次
+
+早餐
+[photo]
+
+午餐
+[photo]
+
+下午茶
+[photo]
+
+＋ 記錄飲食
+```
+
+歷史紀錄支援：
+
+- 依日期查看 Meal
 - 查看照片
-- 查看熱量
-- 編輯 Meal
+- 查看時間 / 餐別 / 備註
+- 編輯自己的 Meal
 - 刪除自己的 Meal
 
-不需要：
-
-- Weekly chart
-- Monthly report
-- AI insight
+「今天」依 `profiles.timezone` 計算。
 
 ---
 
-# 21. Navigation
+# 23. Navigation
 
 Mobile-first。
 
@@ -788,32 +803,32 @@ Mobile-first。
 我的
 ```
 
-其中：
-
 ## 今日
 
-查看：
-
-- 熱量目標
-- 已攝取
-- 剩餘
-- 今日 Meal
+- 今日已記錄 Meal
+- 快速新增
 
 ## 記錄
 
-Create Meal workflow。
+- Create Meal workflow
 
 ## 群組
 
-聊天室 / 群組切換。
+- 群組切換
+- Chat
+- Meal cards
+- Reply / Reaction / GIF / Sticker
 
 ## 我的
 
-Profile / Goal / TDEE / Weight。
+- display name / avatar
+- timezone
+- 我的貼圖
+- 群組相關設定
 
 ---
 
-# 22. Tech Stack
+# 24. Tech Stack
 
 ## Frontend
 
@@ -826,50 +841,38 @@ shadcn/ui
 
 Mobile-first responsive Web。
 
-第一版不做 native app。
+V0.1 不做 native app。
 
----
-
-# 23. Backend
+## Backend
 
 ```text
 Go
 ```
 
-架構：
+採 Modular Monolith。
 
-> Modular Monolith
-
-建議 module：
+建議 modules：
 
 ```text
 /internal
-
 /auth
 /user
 /profile
-/goal
-/tdee
-/weight
 /group
 /meal
 /chat
+/media
+/sticker
 /storage
 ```
 
-不要建立 microservices。
-
----
-
-# 24. Database
+## Database
 
 ```text
 PostgreSQL
 ```
 
-第一版所有 relational data 存 PostgreSQL。
-
-不要加入：
+V0.1 不加入：
 
 - MongoDB
 - Redis
@@ -877,45 +880,9 @@ PostgreSQL
 
 ---
 
-# 25. Storage
+# 25. Deployment
 
-```text
-fake-gcs-server
-```
-
-Docker container。
-
-實作 storage abstraction：
-
-```go
-type ObjectStorage interface {
-    Upload(...)
-    Delete(...)
-    Open(...)
-}
-```
-
-第一版：
-
-```text
-FakeGCSStorage
-```
-
-未來：
-
-```text
-GoogleCloudStorage
-```
-
-不影響 domain layer。
-
----
-
-# 26. Deployment
-
-運行環境：
-
-> Mac mini
+V0.1 運行於 Mac mini。
 
 Docker Compose：
 
@@ -927,142 +894,67 @@ fake-gcs
 cloudflared
 ```
 
-概念：
-
 ```text
 Internet
-   │
+↓
 Cloudflare
-   │
+↓
 Cloudflare Tunnel
-   │
+↓
 Mac mini
-   │
-   ├── Next.js
-   ├── Go API
-   ├── PostgreSQL
-   └── fake-gcs
+├── Next.js
+├── Go API
+├── PostgreSQL
+└── fake-gcs
 ```
 
-PostgreSQL 不暴露至 Internet。
+規則：
 
-fake-gcs 不暴露至 Internet。
-
-Go API 不直接開 public port。
+- PostgreSQL 不直接暴露 Internet
+- fake-gcs 不直接暴露 Internet
+- Go API 不需直接開公網 port
+- secrets 不 commit Git
 
 ---
 
-# 27. Backup
+# 26. Backup
 
-MVP 也必須做資料備份。
+至少每日備份：
 
-至少備份：
+- PostgreSQL
+- fake-GCS persistent data
 
-```text
-PostgreSQL
-fake GCS data
-```
-
-建議每日：
+可先使用：
 
 ```text
 pg_dump
 +
-fake-gcs volume backup
+volume / directory backup
 ```
 
-備份至：
-
-- External SSD
-or
-- NAS
-
-異地備份可以後續加入。
+備份至 External SSD / NAS。
 
 ---
 
-# 28. Security
+# 27. Authorization
 
-## Password
+所有 protected operation 都由 Go 後端判斷，不可信任前端。
 
-不可存 plaintext。
+至少包含：
 
-使用：
+- Group message：必須是 group member
+- Meal edit/delete：必須是 owner
+- Meal read：owner 或有效 MealGroupShare 對應群組成員
+- Meal image：跟隨 Meal authorization
+- Reply / Reaction：必須能存取 parent message 所屬群組
+- Sticker delete：必須是 sticker owner
+- Chat media：依所屬 chat message / group scope 控制
 
-```text
-Argon2id
-```
-
-或：
-
-```text
-bcrypt
-```
-
-## Session
-
-推薦：
-
-```text
-HttpOnly
-Secure
-SameSite
-```
-
-Cookie。
-
-## Authorization
-
-所有 API 不可信任 frontend。
-
-例如：
-
-```text
-GET /groups/{group_id}/messages
-```
-
-Server 必須確認：
-
-```text
-group_members
-WHERE group_id = ?
-AND user_id = current_user
-```
-
-圖片同樣需要 server authorization。
+不得使用 client 傳來的 `user_id` 決定 ownership。
 
 ---
 
-# 29. 建議資料關係
-
-```text
-User
-│
-├── Profile
-├── Goal
-├── WeightRecord
-├── TDEECalculation
-└── MealRecord
-      │
-      └── MealPhoto
-
-
-User
-│
-└── GroupMember
-      │
-      └── Group
-            │
-            └── ChatMessage
-                  │
-                  ├── MealRecord
-                  ├── Reply
-                  └── Reaction
-```
-
----
-
-# 30. API Draft
+# 28. API Draft
 
 Base：
 
@@ -1086,50 +978,26 @@ GET   /me/profile
 PATCH /me/profile
 ```
 
-## Goal / TDEE
-
-```text
-GET  /me/goal
-PUT  /me/goal
-
-GET  /me/tdee
-POST /me/tdee/recalculate
-```
-
-## Weight
-
-```text
-GET  /me/weights
-POST /me/weights
-```
-
 ## Group
 
 ```text
 POST /groups
 GET  /groups
 GET  /groups/{group_id}
-
-POST /groups/{group_id}/invite
-POST /groups/join
-
 GET  /groups/{group_id}/members
+
+POST /groups/{group_id}/invites
+POST /groups/join
 ```
 
 ## Meal
 
 ```text
 POST   /meals
-GET    /meals
+GET    /meals?date=YYYY-MM-DD
 GET    /meals/{meal_id}
 PATCH  /meals/{meal_id}
 DELETE /meals/{meal_id}
-```
-
-Query：
-
-```text
-GET /meals?date=2026-08-14
 ```
 
 ## Meal Photo
@@ -1140,17 +1008,19 @@ GET    /meal-images/{image_id}
 DELETE /meal-images/{image_id}
 ```
 
+## Meal Share
+
+```text
+POST   /meals/{meal_id}/shares
+DELETE /meals/{meal_id}/shares/{group_id}
+```
+
 ## Chat
 
 ```text
-GET  /groups/{group_id}/messages
+GET  /groups/{group_id}/messages?before={cursor}&limit=30
 POST /groups/{group_id}/messages
-```
-
-WebSocket：
-
-```text
-GET /ws/groups/{group_id}
+GET  /ws/groups/{group_id}
 ```
 
 ## Reaction
@@ -1160,15 +1030,34 @@ POST   /messages/{message_id}/reactions
 DELETE /messages/{message_id}/reactions/{reaction_type}
 ```
 
+## Chat Media
+
+```text
+POST /chat-media
+GET  /chat-media/{media_id}
+```
+
+## Sticker
+
+```text
+POST   /me/stickers
+GET    /me/stickers
+GET    /stickers/{sticker_id}/media
+DELETE /me/stickers/{sticker_id}
+```
+
+API naming may be refined during implementation, but product/domain semantics above must be preserved.
+
 ---
 
-# 31. Frontend Pages
+# 29. Frontend Pages
 
 建議：
 
 ```text
 /login
 /register
+/join/{invite_code}
 /onboarding
 
 /today
@@ -1178,25 +1067,26 @@ DELETE /messages/{message_id}/reactions/{reaction_type}
 /groups/{group_id}
 
 /profile
-/profile/goal
-/profile/weight
+/profile/stickers
 ```
 
 ---
 
-# 32. MVP 開發 Phase
+# 30. V0.1 開發 Phase
 
 ## Phase 1 — Infrastructure
 
-完成：
-
+- repository skeleton
 - Docker Compose
 - PostgreSQL
 - fake-gcs
 - Go API skeleton
 - Next.js skeleton
-- Cloudflare Tunnel local config
-- migration system
+- migration framework
+- storage abstraction
+- health endpoint
+- `.env.example`
+- development README
 
 驗收：
 
@@ -1204,216 +1094,129 @@ DELETE /messages/{message_id}/reactions/{reaction_type}
 docker compose up
 ```
 
-可以啟動所有核心服務。
+可啟動核心 local environment。
 
----
+## Phase 2 — Authentication + Basic Profile
 
-## Phase 2 — Authentication
-
-完成：
-
-- users table
-- register
-- login
-- logout
+- users
+- register/login/logout
 - session middleware
-- protected routes
+- display_name
+- avatar
+- timezone
+- protected frontend routes
 
-驗收：
+## Phase 3 — Group + Invite
 
-未登入使用者不能存取：
+- create group
+- join group
+- invite link/code
+- membership authorization
+- owner invariant
 
-```text
-/today
-/groups
-/meals
-```
+## Phase 4 — Meal + Photo
+
+- create/edit/delete Meal
+- 1～4 photos
+- fake-GCS upload
+- image sanitization
+- image proxy authorization
+- photo/DB failure cleanup
+- Today + history basic views
+
+## Phase 5 — Chat Core
+
+- text message
+- WebSocket
+- persisted-before-broadcast
+- client_message_id idempotency
+- cursor pagination
+- reply
+- reaction
+
+## Phase 6 — Meal Sharing
+
+- `meal_group_shares`
+- Meal → ChatMessage reference
+- realtime meal card
+- shared meal/image authorization
+- delete/tombstone behavior
+
+## Phase 7 — Chat Media + GIF + Sticker
+
+- chat image
+- GIF upload/render
+- user custom sticker
+- GIF sticker
+- sticker picker
+
+## Phase 8 — UX Polish / MVP Validation
+
+- mobile-first flow
+- invitation onboarding
+- fast meal record flow
+- empty/loading/error states
+- retry behavior
+- basic usage instrumentation if explicitly selected
 
 ---
 
-## Phase 3 — Profile / TDEE
+# 31. V0.1 Definition of Done
 
-完成：
-
-- onboarding
-- profile
-- goal
-- TDEE calculation
-- weight record
-
-驗收：
-
-使用者輸入：
+至少以下 end-to-end flow 完整成功：
 
 ```text
-gender
-birthday
-height
-weight
-activity level
-goal
+User A 建立群組
+↓
+分享 invite link
+↓
+User B 註冊並加入
+↓
+User A 拍照建立一筆 Meal
+↓
+Meal 照片成功保存
+↓
+Meal 自動分享至群組
+↓
+User B 不 reload 即時看到 Meal card
+↓
+User B Reaction / Reply
+↓
+User B 發送 GIF 或自訂 Sticker
+↓
+User A 即時看到互動
+↓
+User A 在 Today / History 仍可找到自己的 Meal
 ```
 
-可以得到：
+這個 Loop 成功且可實際每天使用，才算 V0.1 完成。
+
+---
+
+# 32. V0.1 明確不做
 
 ```text
 BMR
 TDEE
-Daily Calorie Target
-```
-
----
-
-## Phase 4 — Meal Record
-
-完成：
-
-- create meal
-- edit meal
-- delete meal
-- list today's meals
-- upload images
-- image proxy authorization
-
-驗收：
-
-使用者可以：
-
-```text
-新增午餐
-上傳照片
-重新整理頁面
-仍可看到照片與 Meal
-```
-
----
-
-## Phase 5 — Group
-
-完成：
-
-- create group
-- invite code
-- join group
-- member list
-
-驗收：
-
-兩個不同帳號可以加入同一個群組。
-
----
-
-## Phase 6 — Chat
-
-完成：
-
-- text message
-- meal message
-- reply
-- reaction
-- WebSocket realtime
-
-驗收：
-
-User A 發訊息後：
-
-User B 不 reload 頁面即可看到。
-
----
-
-## Phase 7 — Meal Social Sharing
-
-完成：
-
-```text
-Create Meal
-↓
-share_to_group
-↓
-automatic MealMessage
-↓
-other users see
-↓
-Reply / Reaction
-```
-
-這是 MVP 最重要的整合驗收。
-
----
-
-## Phase 8 — Today UX
-
-完成：
-
-```text
-Daily Calorie Target
-Consumed
-Remaining
-Meals
-```
-
-驗收：
-
-新增 Meal 後數值立即更新。
-
----
-
-# 33. MVP Definition of Done
-
-只有以下完整流程全部成功，才算 MVP 完成：
-
-```text
-User A 註冊
-↓
-設定 Profile
-↓
-取得 TDEE
-↓
-建立 Group
-↓
-User B 加入
-↓
-User A 記錄 Meal
-↓
-上傳照片
-↓
-Meal 自動出現在 Group Chat
-↓
-User B 即時看到
-↓
-User B Reaction
-↓
-User B Reply
-↓
-User A 看到 Reply
-↓
-User A Today page 熱量同步更新
-```
-
----
-
-# 34. 第一版明確不做
-
-不要讓 Scope 擴張。
-
-MVP 不做：
-
-```text
+每日熱量目標
+Calories tracking
+Protein / Carbs / Fat
+體重追蹤
 AI 食物辨識
-AI 熱量估計
+AI 熱量估算
+營養資料庫
 Apple Health
-Google Health Connect
+Health Connect
 Push Notification
 Native iOS
 Native Android
 公開社群
-好友系統
+好友 / Follow 系統
 排行榜
 成就系統
-營養師功能
-付款
-訂閱
-完整營養資料庫
+付款 / 訂閱
+GIPHY / Tenor 搜尋整合
+圖片時間浮水印
 Redis
 Kafka
 Microservices
@@ -1422,176 +1225,120 @@ CDN
 Signed URL
 ```
 
----
-
-# 35. 後續可擴充方向
-
-MVP 驗證成功後：
-
-## AI Meal Analysis
-
-```text
-Meal Photo
-↓
-Vision Model
-↓
-Food Recognition
-↓
-Calories / Macro Estimate
-↓
-User Confirm
-```
-
-## Adaptive TDEE
-
-```text
-Calorie Intake
-+
-Weight Trend
-+
-Time
-↓
-Estimate Real TDEE
-```
-
-## Health Integration
-
-```text
-Apple Health
-Health Connect
-```
-
-## Notifications
-
-例如：
-
-```text
-朋友記錄了一餐
-有人回覆你的飲食
-今天尚未記錄午餐
-```
+除非需求文件明確更新，coding agent 不得自行將上述功能加入 V0.1。
 
 ---
 
-# 36. Codex 開發原則
+# 33. 後續 Roadmap
 
-Codex 開發時必須遵守：
+## V0.2 — Understand
 
-1. MVP-first，不自行加入未定義功能。
+目標：讓既有 Meal Record 產生更多飲食資訊。
+
+可能包含：
+
+```text
+Meal photo
+↓
+食物辨識 / 使用者確認
+↓
+Calories / Macros
+↓
+每日攝取摘要
+```
+
+可研究：
+
+- AI food recognition
+- AI calorie estimation
+- meal nutrition model
+- nutrition source / confidence / user confirmation
+
+## V0.3 — Control
+
+目標：從「知道吃什麼」進入「知道應該吃多少」。
+
+可能包含：
+
+- 身高 / 體重 / 性別 / 年齡
+- BMR
+- TDEE
+- daily calorie target
+- weight history
+- adaptive TDEE
+- progress / recommendation
+
+TDEE 公式與資料模型等到 V0.3 再正式定義，避免 V0.1 過早綁死。
+
+---
+
+# 34. Codex / Coding Agent 開發原則
+
+1. V0.1-first，不自行加入 Roadmap 功能。
 2. 採 Modular Monolith。
-3. Domain logic 不放在 HTTP Handler。
-4. Storage 必須透過 interface。
-5. 前端不可依賴 fake GCS object path。
-6. 圖片存取必須經 backend authorization。
-7. ChatMessage 只 reference MealRecord，不複製 Meal data。
+3. Domain logic 不放 HTTP Handler。
+4. Storage 透過 interface。
+5. 前端不可依賴 fake-GCS path / URL。
+6. 圖片與 media 存取必須經 backend authorization。
+7. MealMessage 只 reference MealRecord。
 8. Comment 不獨立建模，使用 Reply Message。
-9. TDEE 必須保留 calculation history。
-10. 所有 database schema 使用 migration 管理。
-11. API 需有基礎 integration tests。
-12. 核心 domain logic 需有 unit tests。
-13. 不加入 Redis / Kafka / Microservices，除非規格更新。
-14. secrets 不 commit 至 Git。
-15. Docker Compose 必須能建立完整 local environment。
+9. 分享權限使用 `meal_group_shares`，不可只靠 ChatMessage 反推。
+10. DB schema 全部使用 migration。
+11. 核心 domain logic 需要 unit tests。
+12. 關鍵 API / authorization 需要 integration tests。
+13. WebSocket 需先 persistence 再 broadcast。
+14. Chat send 必須考慮 idempotent retry。
+15. 所有時間處理明確考慮 timezone。
+16. 不 commit secrets。
+17. Docker Compose 必須能建立完整 local environment。
+18. 不做與當前 task 無關的大型 refactor。
 
 ---
 
-# 37. 建議 Repository Structure
+# 35. Repository Structure
+
+建議：
 
 ```text
-diet-control/
-│
+chiban/
 ├── apps/
 │   ├── web/
-│   │   └── Next.js
-│   │
 │   └── api/
-│       └── Go
-│
 ├── migrations/
-│
 ├── docker/
-│
 ├── scripts/
-│
-├── data/
-│   ├── postgres/
-│   └── fake-gcs/
-│
 ├── docs/
 │   └── MVP_SPEC.md
-│
 ├── docker-compose.yml
 ├── .env.example
+├── AGENTS.md
+├── CLAUDE.md
 └── README.md
 ```
 
-Go：
+Go 建議：
 
 ```text
 apps/api/
-
-cmd/
-  api/
-
-internal/
-  auth/
-  user/
-  profile/
-  goal/
-  tdee/
-  weight/
-  group/
-  meal/
-  chat/
-  storage/
-
-pkg/
+├── cmd/api/
+└── internal/
+    ├── auth/
+    ├── user/
+    ├── profile/
+    ├── group/
+    ├── meal/
+    ├── chat/
+    ├── media/
+    ├── sticker/
+    └── storage/
 ```
 
 ---
 
-# 38. 第一個 Codex 任務建議
+# 36. 第一個 Coding Agent 任務
 
-不要直接一次要求 Codex 完成全部功能。
+建議第一個任務仍只建立基礎設施：
 
-第一個任務：
+> 根據 `docs/MVP_SPEC.md` 建立 monorepo skeleton，完成 Docker Compose、PostgreSQL、fake-gcs-server、Go API 與 Next.js 基礎專案。加入 health endpoint、database migration framework、storage abstraction、`.env.example` 與 README 開發啟動說明。此階段不要實作產品功能。
 
-> 根據 docs/MVP_SPEC.md 建立 monorepo skeleton，完成 Docker Compose、PostgreSQL、fake-gcs-server、Go API 與 Next.js 基礎專案。加入 health endpoint、database migration framework、storage abstraction 與 README 開發啟動說明。此階段不要實作產品功能。
-
-第二個任務：
-
-> 實作 Authentication + User/Profile schema。
-
-第三個任務：
-
-> 實作 Goal / Weight / TDEE。
-
-依 Phase 逐步完成。
-
----
-
-# 39. MVP 核心產品 Loop
-
-最終所有技術與 UX 都服務這個 Loop：
-
-```text
-吃東西
-↓
-記錄
-↓
-拍照
-↓
-系統計算今日熱量
-↓
-分享至群組
-↓
-朋友 Reaction / Reply
-↓
-形成 Accountability
-↓
-影響下一餐選擇
-↓
-再次記錄
-```
-
-如果 MVP 無法驗證這個 Loop，就不應優先加入其他進階功能。
+接著嚴格依 Phase 逐步實作與驗收。
