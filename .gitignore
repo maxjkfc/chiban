@@ -1,0 +1,14 @@
+.env
+.env.local
+.DS_Store
+
+# Node
+node_modules/
+.next/
+next-env.d.ts
+
+# Go
+/apps/api/bin/
+
+# Local backups
+/backups/

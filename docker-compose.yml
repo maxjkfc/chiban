@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chiban}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chiban}
+      POSTGRES_DB: ${POSTGRES_DB:-chiban}
+    ports:
+      # Exposed on the host for local development and tests only.
+      # Never publish this port on the Mac mini deployment.
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chiban} -d ${POSTGRES_DB:-chiban}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.52
+    command: ["-scheme", "http", "-port", "4443", "-backend", "filesystem", "-data", "/data"]
+    ports:
+      - "${FAKE_GCS_PORT:-14443}:4443"
+    volumes:
+      - fake-gcs-data:/data
+
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      CHIBAN_HTTP_ADDR: ":8080"
+      CHIBAN_DATABASE_URL: postgres://${POSTGRES_USER:-chiban}:${POSTGRES_PASSWORD:-chiban}@postgres:5432/${POSTGRES_DB:-chiban}?sslmode=disable
+      CHIBAN_STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+      CHIBAN_WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      - "${API_PORT:-18080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fake-gcs:
+        condition: service_started
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:18080}
+    environment:
+      # Browser-side calls go to the API through the host/tunnel, not the
+      # compose network, so this is a public URL.
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:18080}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+  # Only started with `docker compose --profile tunnel up`, once a tunnel
+  # token exists. Local development does not need it.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    depends_on:
+      - web
+      - api
+
+volumes:
+  postgres-data:
+  fake-gcs-data:

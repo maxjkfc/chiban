@@ -1,1 +1,76 @@
-# chiban
+# 吃伴 (Chiban)
+
+和朋友一起記錄飲食。拍照發布，紀錄即時出現在私人群組裡，朋友可以回覆、Reaction、丟 GIF 與貼圖。
+
+- 產品與技術範圍：[`docs/MVP_SPEC.md`](docs/MVP_SPEC.md)
+- 開發規格與 slice 計劃：[`docs/V0.1_SPEC.md`](docs/V0.1_SPEC.md)
+- 工程約束：[`AGENTS.md`](AGENTS.md)
+
+## 開發環境
+
+需求：Docker、Go 1.26+、Node 22+。
+
+```bash
+cp .env.example .env
+make dev
+```
+
+`make dev` 會建置並啟動 web、api、postgres、fake-gcs。啟動後：
+
+| 服務 | 位置 |
+|---|---|
+| Web | http://localhost:3000 |
+| API | http://localhost:18080 |
+| PostgreSQL | localhost:15432 |
+| fake-gcs | http://localhost:14443 |
+
+首頁會顯示 API 連線狀態，可用來確認整條 browser → API → PostgreSQL 的路徑是通的。
+
+host port 刻意避開 5432 / 4443 / 8080，以免和機器上其他專案的 compose stack 衝突。要改就改 `.env`。
+
+### 從原始碼跑 api / web
+
+```bash
+make dev-deps                        # 只啟動 postgres 與 fake-gcs
+cd apps/api && go run ./cmd/api      # 需要 .env 中的 CHIBAN_* 變數
+cd apps/web && npm run dev
+```
+
+### 測試
+
+```bash
+make test
+```
+
+整合測試會對真實的 PostgreSQL 啟動完整 API，並以 in-memory object storage 取代 fake-gcs；另有一個 smoke test 直接打 fake-gcs，確認 storage 介面在真實後端上成立。測試需要 `make dev-deps` 起來的服務，`make test` 會自動處理。
+
+測試策略與 seam 的理由見 [`docs/V0.1_SPEC.md`](docs/V0.1_SPEC.md) 的 Testing Decisions。
+
+### Migration
+
+```bash
+make migrate-up
+make migrate-down
+```
+
+Migration 檔在 `apps/api/migrations/`，以 goose 格式撰寫並編譯進 binary，因此 API、migrate 指令與測試套件套用的是同一份 schema。API 啟動時會自動套用未執行的 migration。
+
+新增 migration：在該目錄建立 `NNNNN_name.sql`，包含 `-- +goose Up` 與 `-- +goose Down` 兩段。已經套用出去的 migration 不要改，另外新增一支。
+
+## 部署
+
+目標環境是 Mac mini + Docker Compose + Cloudflare Tunnel：
+
+```bash
+docker compose --profile tunnel up -d
+```
+
+PostgreSQL 與 fake-gcs 不對外開放；只有 Cloudflare Tunnel 進得來。secrets 放 `.env`，不進 git。
+
+## Repository
+
+```text
+apps/api    Go modular monolith（HTTP + 之後的 WebSocket）
+apps/web    Next.js（mobile-first）
+docs        規格
+```
