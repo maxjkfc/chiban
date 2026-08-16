@@ -20,7 +20,8 @@ func TestGCSRoundTripAgainstFakeGCS(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	const bucket = "meal-images"
+	// A bucket of its own, so the smoke test never touches application data.
+	const bucket = "chiban-storage-smoke-test"
 	gcs, err := storage.NewGCS(ctx, host, []string{bucket})
 	if err != nil {
 		t.Fatalf("connect to fake-gcs: %v", err)

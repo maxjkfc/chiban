@@ -175,6 +175,9 @@ func TestRegisterRejectsInvalidInput(t *testing.T) {
 		{"missing email", "", testsupport.TestPassword},
 		{"malformed email", "not-an-email", testsupport.TestPassword},
 		{"short password", "mei@example.com", "short"},
+		// bcrypt rejects inputs over 72 bytes; a password manager can produce
+		// one, so it must come back as bad input rather than a 500.
+		{"password past bcrypt's limit", "mei@example.com", strings.Repeat("a", 73)},
 	}
 
 	for _, tc := range cases {

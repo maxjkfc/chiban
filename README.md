@@ -31,10 +31,11 @@ host port 刻意避開 5432 / 4443 / 8080，以免和機器上其他專案的 co
 ### 從原始碼跑 api / web
 
 ```bash
-make dev-deps                        # 只啟動 postgres 與 fake-gcs
-cd apps/api && go run ./cmd/api      # 需要 .env 中的 CHIBAN_* 變數
-cd apps/web && npm run dev
+make run-api    # 起 postgres/fake-gcs，再從原始碼跑 Go API
+make run-web
 ```
+
+Go 不會自動讀 `.env`，所以 `CHIBAN_*` 變數由 Makefile 帶入。要手動跑就先 `set -a; source .env; set +a`。
 
 ### 測試
 
@@ -42,7 +43,9 @@ cd apps/web && npm run dev
 make test
 ```
 
-整合測試會對真實的 PostgreSQL 啟動完整 API，並以 in-memory object storage 取代 fake-gcs；另有一個 smoke test 直接打 fake-gcs，確認 storage 介面在真實後端上成立。測試需要 `make dev-deps` 起來的服務，`make test` 會自動處理。
+整合測試會對真實的 PostgreSQL 啟動完整 API，並以 in-memory object storage 取代 fake-gcs；另有一個 smoke test 直接打 fake-gcs，確認 storage 介面在真實後端上成立。
+
+測試會 TRUNCATE 所有資料表並把 migration 退到零，因此跑在獨立的 `chiban_test` 資料庫，不會動到 app 用的 `chiban`。`make test` 會在需要時自動建立這個資料庫。
 
 測試策略與 seam 的理由見 [`docs/V0.1_SPEC.md`](docs/V0.1_SPEC.md) 的 Testing Decisions。
 

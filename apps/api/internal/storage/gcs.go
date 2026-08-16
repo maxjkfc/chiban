@@ -69,7 +69,7 @@ func (g *GCS) Upload(ctx context.Context, bucket, name, contentType string, r io
 	w.ContentType = contentType
 	size, err := io.Copy(w, r)
 	if err != nil {
-		w.Close()
+		_ = w.Close()
 		return Object{}, fmt.Errorf("storage: write object: %w", err)
 	}
 	if err := w.Close(); err != nil {

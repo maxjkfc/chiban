@@ -46,6 +46,11 @@ const SessionLifetime = 30 * 24 * time.Hour
 
 const minPasswordLength = 8
 
+// maxPasswordBytes is bcrypt's hard input limit. Anything longer makes
+// GenerateFromPassword fail, and a password manager can easily produce it, so
+// it has to be rejected as bad input rather than surface as a server error.
+const maxPasswordBytes = 72
+
 type User struct {
 	ID        uuid.UUID
 	Email     string
@@ -80,6 +85,12 @@ func (s *Service) Register(ctx context.Context, email, password string) (User, e
 		return User{}, InvalidInputError{
 			Field:   "password",
 			Message: fmt.Sprintf("must be at least %d characters", minPasswordLength),
+		}
+	}
+	if len(password) > maxPasswordBytes {
+		return User{}, InvalidInputError{
+			Field:   "password",
+			Message: fmt.Sprintf("must be at most %d bytes", maxPasswordBytes),
 		}
 	}
 
