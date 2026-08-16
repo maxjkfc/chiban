@@ -3,6 +3,10 @@
 # Make does not read .env on its own, so without this every port and credential
 # below would silently disagree with what Compose actually uses the moment
 # anyone edits .env.
+#
+# Make's include is not a dotenv parser: `#` starts a comment and `$` expands.
+# Keep .env values free of both, as .env.example says. A password mangled this
+# way fails loudly at connect time rather than corrupting anything.
 -include .env
 export
 
@@ -16,17 +20,20 @@ APP_DB ?= $(or $(POSTGRES_DB),chiban)
 TEST_DB ?= $(APP_DB)_test
 PG_READY_TIMEOUT ?= 30
 
-export CHIBAN_DATABASE_URL ?= postgres://$(PG_USER):$(PG_PASSWORD)@localhost:$(POSTGRES_HOST_PORT)/$(APP_DB)?sslmode=disable
-export CHIBAN_STORAGE_EMULATOR_HOST ?= http://localhost:$(FAKE_GCS_HOST_PORT)
+# Derived, never `?=`: a leftover CHIBAN_* line in someone's .env from an older
+# revision would otherwise win and silently point at the old ports. .env supplies
+# primitives only. A command-line override still beats these.
+export CHIBAN_DATABASE_URL = postgres://$(PG_USER):$(PG_PASSWORD)@localhost:$(POSTGRES_HOST_PORT)/$(APP_DB)?sslmode=disable
+export CHIBAN_STORAGE_EMULATOR_HOST = http://localhost:$(FAKE_GCS_HOST_PORT)
 # Source-run API listens on the same port Compose publishes, so the web dev
 # server reaches it either way. Stop the api container first.
-export CHIBAN_HTTP_ADDR ?= :$(API_HOST_PORT)
-export NEXT_PUBLIC_API_BASE_URL ?= http://localhost:$(API_HOST_PORT)
+export CHIBAN_HTTP_ADDR = :$(API_HOST_PORT)
+export NEXT_PUBLIC_API_BASE_URL = http://localhost:$(API_HOST_PORT)
 
 # Tests get their own database. They TRUNCATE every table and roll migrations
 # back to zero, which must never happen to the database the app is running on.
-export CHIBAN_TEST_DATABASE_URL ?= postgres://$(PG_USER):$(PG_PASSWORD)@localhost:$(POSTGRES_HOST_PORT)/$(TEST_DB)?sslmode=disable
-export CHIBAN_TEST_STORAGE_EMULATOR_HOST ?= $(CHIBAN_STORAGE_EMULATOR_HOST)
+export CHIBAN_TEST_DATABASE_URL = postgres://$(PG_USER):$(PG_PASSWORD)@localhost:$(POSTGRES_HOST_PORT)/$(TEST_DB)?sslmode=disable
+export CHIBAN_TEST_STORAGE_EMULATOR_HOST = $(CHIBAN_STORAGE_EMULATOR_HOST)
 
 ## Start the whole stack.
 dev:
