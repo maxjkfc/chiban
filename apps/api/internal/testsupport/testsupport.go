@@ -20,11 +20,13 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/database"
 	"github.com/maxjkfc/chiban/apps/api/internal/httpapi"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
@@ -121,6 +123,76 @@ func (a *App) Request(method, path string, body any) *http.Response {
 	}
 	a.t.Cleanup(func() { resp.Body.Close() })
 	return resp
+}
+
+// TestPassword is used by every fixture that does not care about the password.
+const TestPassword = "correct-horse-battery"
+
+// User is an account created by a fixture helper.
+type User struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
+// RegisterUser creates an account and leaves the App's client logged in as it.
+// Registration returns a session, which is what the invite flow relies on.
+func (a *App) RegisterUser(email string) User {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPost, "/api/v1/auth/register", map[string]string{
+		"email":    email,
+		"password": TestPassword,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("register %s: status = %d, want %d", email, resp.StatusCode, http.StatusCreated)
+	}
+
+	var user User
+	a.DecodeJSON(resp, &user)
+	return user
+}
+
+// SessionCookie returns the current session token, for tests that need to
+// replay or tamper with it.
+func (a *App) SessionCookie() string {
+	a.t.Helper()
+
+	base, err := url.Parse(a.BaseURL)
+	if err != nil {
+		a.t.Fatalf("parse base url: %v", err)
+	}
+	for _, cookie := range a.Client.Jar.Cookies(base) {
+		if cookie.Name == auth.CookieName {
+			return cookie.Value
+		}
+	}
+	a.t.Fatal("no session cookie; is the client logged in?")
+	return ""
+}
+
+// SetSessionCookie forces the client to present the given session token.
+func (a *App) SetSessionCookie(token string) {
+	a.t.Helper()
+
+	base, err := url.Parse(a.BaseURL)
+	if err != nil {
+		a.t.Fatalf("parse base url: %v", err)
+	}
+	a.Client.Jar.SetCookies(base, []*http.Cookie{{
+		Name:  auth.CookieName,
+		Value: token,
+		Path:  "/",
+	}})
+}
+
+// Logout ends the current session.
+func (a *App) Logout() {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPost, "/api/v1/auth/logout", nil)
+	if resp.StatusCode != http.StatusNoContent {
+		a.t.Fatalf("logout: status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
 }
 
 // DecodeJSON reads a JSON response body into dest.

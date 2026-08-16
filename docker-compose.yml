@@ -33,6 +33,7 @@ services:
       CHIBAN_DATABASE_URL: postgres://${POSTGRES_USER:-chiban}:${POSTGRES_PASSWORD:-chiban}@postgres:5432/${POSTGRES_DB:-chiban}?sslmode=disable
       CHIBAN_STORAGE_EMULATOR_HOST: http://fake-gcs:4443
       CHIBAN_WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      CHIBAN_SECURE_COOKIES: ${SECURE_COOKIES:-false}
     ports:
       - "${API_PORT:-18080}:8080"
     depends_on:

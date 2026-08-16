@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
@@ -19,14 +20,28 @@ type Deps struct {
 	DB      *sql.DB
 	Storage storage.ObjectStorage
 	Logger  *slog.Logger
+	Auth    *auth.Service
 	// WebOrigin is the one browser origin allowed to send credentialed
 	// requests. Empty disables CORS entirely, which is what tests want.
 	WebOrigin string
+	// SecureCookies marks session cookies Secure. False only for plain HTTP
+	// local development.
+	SecureCookies bool
 }
 
 func NewRouter(d Deps) http.Handler {
+	if d.Auth == nil {
+		d.Auth = auth.NewService(d.DB)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(d))
+
+	mux.HandleFunc("POST /api/v1/auth/register", registerHandler(d))
+	mux.HandleFunc("POST /api/v1/auth/login", loginHandler(d))
+	mux.HandleFunc("POST /api/v1/auth/logout", logoutHandler(d))
+	mux.Handle("GET /api/v1/auth/me", d.Auth.RequireUser(meHandler()))
+
 	return withCORS(d.WebOrigin, mux)
 }
 
@@ -73,4 +88,14 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeError returns the one error shape the frontend has to handle. field is
+// optional and names the input the client should correct.
+func writeError(w http.ResponseWriter, status int, message string, field ...string) {
+	body := map[string]string{"error": message}
+	if len(field) > 0 {
+		body["field"] = field[0]
+	}
+	writeJSON(w, status, body)
 }

@@ -53,10 +53,11 @@ func run(logger *slog.Logger) error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			DB:        db,
-			Storage:   objects,
-			Logger:    logger,
-			WebOrigin: cfg.WebOrigin,
+			DB:            db,
+			Storage:       objects,
+			Logger:        logger,
+			WebOrigin:     cfg.WebOrigin,
+			SecureCookies: cfg.SecureCookies,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

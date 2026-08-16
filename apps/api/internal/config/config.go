@@ -19,6 +19,8 @@ type Config struct {
 	// WebOrigin is the single browser origin allowed to call the API with
 	// credentials. Sessions are cookie-based, so this cannot be a wildcard.
 	WebOrigin string
+	// SecureCookies must be true wherever the site is served over HTTPS.
+	SecureCookies bool
 }
 
 func Load() (Config, error) {
@@ -27,6 +29,7 @@ func Load() (Config, error) {
 		DatabaseURL:         os.Getenv("CHIBAN_DATABASE_URL"),
 		StorageEmulatorHost: os.Getenv("CHIBAN_STORAGE_EMULATOR_HOST"),
 		WebOrigin:           envOr("CHIBAN_WEB_ORIGIN", "http://localhost:3000"),
+		SecureCookies:       os.Getenv("CHIBAN_SECURE_COOKIES") == "true",
 	}
 	if c.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("CHIBAN_DATABASE_URL is required")
