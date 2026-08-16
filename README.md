@@ -35,7 +35,9 @@ make run-api    # 起 postgres/fake-gcs，再從原始碼跑 Go API
 make run-web
 ```
 
-Go 不會自動讀 `.env`，所以 `CHIBAN_*` 變數由 Makefile 帶入。要手動跑就先 `set -a; source .env; set +a`。
+`.env` 只放 port、帳密與 token 這些原始值；`CHIBAN_*` 由 Makefile 從它們推導，所以每個 port 只定義在一個地方。改 `.env` 的 `POSTGRES_PORT` 或 `API_PORT`，Compose 與 Makefile 會一起跟著變。
+
+Go 不會自動讀 `.env`，因此請走 make target；要手動跑就照 Makefile 的組法自行 export。`make run-api` 監聽的 port 與 Compose 發佈的相同，所以 web dev server 兩種跑法都接得到——但要先把 api 容器停掉。
 
 ### 測試
 
