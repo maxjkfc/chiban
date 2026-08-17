@@ -120,7 +120,9 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
         <h2 className="text-sm font-medium">邀請朋友</h2>
         <p className="text-muted-foreground text-xs">連結 7 天內有效，可以給多個人使用。</p>
 
-        <Button onClick={handleInvite} disabled={busy}>
+        {/* Disabled until the initial load lands: a create that resolves
+            before it would otherwise be overwritten by the slower list fetch. */}
+        <Button onClick={handleInvite} disabled={busy || !group}>
           {busy ? "處理中…" : "產生邀請連結"}
         </Button>
 
