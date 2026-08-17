@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Profile } from "@/lib/api";
 
 export default function ProfilePage() {
@@ -49,7 +50,9 @@ export default function ProfilePage() {
       setStatus("已儲存");
     } catch (caught) {
       setError(
-        caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
       );
     } finally {
       setSubmitting(false);
@@ -68,7 +71,7 @@ export default function ProfilePage() {
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
-      <h1 className="text-2xl font-semibold">我的</h1>
+      <h1>我的</h1>
 
       {loaded ? (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -91,28 +94,20 @@ export default function ProfilePage() {
               value={timezone}
               onChange={(event) => setTimezone(event.target.value)}
             />
-            <p className="text-muted-foreground text-xs">決定「今天」從幾點開始。</p>
+            <p className="text-muted-foreground text-xs">
+              決定「今天」從幾點開始。
+            </p>
           </div>
 
-          {error ? (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
-          ) : null}
-          {status ? (
-            <p role="status" className="text-muted-foreground text-sm">
-              {status}
-            </p>
-          ) : null}
+          {error ? <Message tone="error">{error}</Message> : null}
+          {status ? <Message tone="success">{status}</Message> : null}
 
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" loading={submitting}>
             {submitting ? "儲存中…" : "儲存"}
           </Button>
         </form>
       ) : (
-        <p className="text-muted-foreground text-sm" role="status">
-          {error ?? "載入中…"}
-        </p>
+        <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
       )}
 
       <Button variant="outline" onClick={handleLogout}>

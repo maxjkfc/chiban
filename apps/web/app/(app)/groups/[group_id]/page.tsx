@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   ApiRequestError,
@@ -28,7 +29,9 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
 
   const loadInvites = useCallback(
     (signal?: AbortSignal) =>
-      apiFetch<Invite[]>(`/api/v1/groups/${groupId}/invites`, { signal }).then(setInvites),
+      apiFetch<Invite[]>(`/api/v1/groups/${groupId}/invites`, { signal }).then(
+        setInvites,
+      ),
     [groupId],
   );
 
@@ -61,12 +64,19 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
     setError(null);
     setBusy(true);
     try {
-      const created = await apiFetch<Invite>(`/api/v1/groups/${groupId}/invites`, {
-        method: "POST",
-      });
+      const created = await apiFetch<Invite>(
+        `/api/v1/groups/${groupId}/invites`,
+        {
+          method: "POST",
+        },
+      );
       setInvites((current) => [created, ...current]);
     } catch (caught) {
-      setError(caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試");
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
+      );
     } finally {
       setBusy(false);
     }
@@ -79,9 +89,15 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
       await apiFetch<void>(`/api/v1/groups/${groupId}/invites/${inviteId}`, {
         method: "DELETE",
       });
-      setInvites((current) => current.filter((invite) => invite.id !== inviteId));
+      setInvites((current) =>
+        current.filter((invite) => invite.id !== inviteId),
+      );
     } catch (caught) {
-      setError(caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試");
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
+      );
     } finally {
       setBusy(false);
     }
@@ -90,16 +106,14 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
   if (error && !group) {
     return (
       <main className="flex flex-1 flex-col gap-4 p-6">
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
+        <Message tone="error">{error}</Message>
       </main>
     );
   }
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
-      <h1 className="text-2xl font-semibold">{group?.name ?? "載入中…"}</h1>
+      <h1>{group?.name ?? "載入中…"}</h1>
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">成員</h2>
@@ -118,11 +132,13 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
 
       <section className="flex flex-col gap-3 border-t pt-6">
         <h2 className="text-sm font-medium">邀請朋友</h2>
-        <p className="text-muted-foreground text-xs">連結 7 天內有效，可以給多個人使用。</p>
+        <p className="text-muted-foreground text-xs">
+          連結 7 天內有效，可以給多個人使用。
+        </p>
 
         {/* Disabled until the initial load lands: a create that resolves
             before it would otherwise be overwritten by the slower list fetch. */}
-        <Button onClick={handleInvite} disabled={busy || !group}>
+        <Button onClick={handleInvite} loading={busy} disabled={!group}>
           {busy ? "處理中…" : "產生邀請連結"}
         </Button>
 
@@ -152,11 +168,7 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
           </ul>
         ) : null}
 
-        {error ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        ) : null}
+        {error ? <Message tone="error">{error}</Message> : null}
       </section>
     </main>
   );

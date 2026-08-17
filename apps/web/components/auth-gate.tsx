@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Profile } from "@/lib/api";
 
 type State = "checking" | "allowed" | "redirecting";
@@ -49,8 +50,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (state !== "allowed") {
     return (
-      <div className="flex flex-1 items-center justify-center p-6" role="status">
-        <span className="text-muted-foreground text-sm">載入中…</span>
+      <div className="flex flex-1 items-center justify-center p-6">
+        <Message>載入中…</Message>
       </div>
     );
   }

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Group } from "@/lib/api";
 
 export default function GroupsPage() {
@@ -40,7 +41,9 @@ export default function GroupsPage() {
       setName("");
     } catch (caught) {
       setError(
-        caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
       );
     } finally {
       setSubmitting(false);
@@ -49,12 +52,10 @@ export default function GroupsPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-6 p-6">
-      <h1 className="text-2xl font-semibold">群組</h1>
+      <h1>群組</h1>
 
       {groups === null ? (
-        <p className="text-muted-foreground text-sm" role="status">
-          {error ?? "載入中…"}
-        </p>
+        <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
       ) : groups.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           還沒有群組。建立一個，再把邀請連結傳給朋友。
@@ -65,11 +66,13 @@ export default function GroupsPage() {
             <li key={group.id}>
               <Link
                 href={`/groups/${group.id}`}
-                className="flex items-center justify-between rounded-md border p-4"
+                className="card-surface flex items-center justify-between font-semibold"
               >
                 <span>{group.name}</span>
                 {group.is_owner ? (
-                  <span className="text-muted-foreground text-xs">管理者</span>
+                  <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs">
+                    管理者
+                  </span>
                 ) : null}
               </Link>
             </li>
@@ -77,7 +80,10 @@ export default function GroupsPage() {
         </ul>
       )}
 
-      <form onSubmit={handleCreate} className="flex flex-col gap-3 border-t pt-6">
+      <form
+        onSubmit={handleCreate}
+        className="flex flex-col gap-3 border-t pt-6"
+      >
         <Label htmlFor="group-name">建立群組</Label>
         <Input
           id="group-name"
@@ -88,11 +94,9 @@ export default function GroupsPage() {
           onChange={(event) => setName(event.target.value)}
         />
         {error && groups !== null ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
+          <Message tone="error">{error}</Message>
         ) : null}
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" loading={submitting}>
           {submitting ? "建立中…" : "建立"}
         </Button>
       </form>

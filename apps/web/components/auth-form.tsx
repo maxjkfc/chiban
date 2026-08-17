@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, safeNextPath, type User } from "@/lib/api";
 
 type Mode = "login" | "register";
@@ -51,11 +52,16 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setSubmitting(true);
 
     try {
-      await apiFetch<User>(text.path, { method: "POST", body: { email, password } });
+      await apiFetch<User>(text.path, {
+        method: "POST",
+        body: { email, password },
+      });
       router.replace(safeNextPath(next) ?? "/today");
     } catch (caught) {
       setError(
-        caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
       );
       setSubmitting(false);
     }
@@ -64,7 +70,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   return (
     <main className="flex flex-1 flex-col justify-center gap-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">吃伴</h1>
+        <h1>吃伴</h1>
         <p className="text-muted-foreground text-sm">和朋友一起記錄飲食</p>
       </div>
 
@@ -88,7 +94,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
           <Input
             id="password"
             type="password"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
+            autoComplete={
+              mode === "login" ? "current-password" : "new-password"
+            }
             required
             minLength={8}
             value={password}
@@ -96,13 +104,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
           />
         </div>
 
-        {error ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        ) : null}
+        {error ? <Message tone="error">{error}</Message> : null}
 
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" loading={submitting}>
           {submitting ? "處理中…" : text.submit}
         </Button>
       </form>
@@ -110,7 +114,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
       {/* Carry the invite forward: someone who already has an account has to
           reach login without losing the group they were invited to. */}
       <Link
-        href={next ? `${text.switchHref}?next=${encodeURIComponent(next)}` : text.switchHref}
+        href={
+          next
+            ? `${text.switchHref}?next=${encodeURIComponent(next)}`
+            : text.switchHref
+        }
         className="text-muted-foreground text-sm underline"
       >
         {text.switchText}

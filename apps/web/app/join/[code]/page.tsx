@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
+import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Group, type Profile } from "@/lib/api";
 
 type State = "joining" | "failed";
@@ -71,15 +72,11 @@ export default function JoinPage({ params }: PageProps<"/join/[code]">) {
 
   return (
     <main className="flex flex-1 flex-col justify-center gap-3 p-6">
-      <h1 className="text-2xl font-semibold">吃伴</h1>
+      <h1>吃伴</h1>
       {state === "joining" ? (
-        <p className="text-muted-foreground text-sm" role="status">
-          加入群組中…
-        </p>
+        <Message>加入群組中…</Message>
       ) : (
-        <p role="alert" className="text-destructive text-sm">
-          {message}
-        </p>
+        <Message tone="error">{message}</Message>
       )}
     </main>
   );

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   ApiRequestError,
@@ -45,7 +46,9 @@ export function OnboardingForm() {
         return;
       }
       setError(
-        caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
       );
       setSubmitting(false);
     }
@@ -54,8 +57,10 @@ export function OnboardingForm() {
   return (
     <main className="flex flex-1 flex-col justify-center gap-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">設定暱稱</h1>
-        <p className="text-muted-foreground text-sm">朋友會在群組裡看到這個名字。</p>
+        <h1>設定暱稱</h1>
+        <p className="text-muted-foreground text-sm">
+          朋友會在群組裡看到這個名字。
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -84,13 +89,9 @@ export function OnboardingForm() {
           </p>
         </div>
 
-        {error ? (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        ) : null}
+        {error ? <Message tone="error">{error}</Message> : null}
 
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" loading={submitting}>
           {submitting ? "儲存中…" : "開始使用"}
         </Button>
       </form>
