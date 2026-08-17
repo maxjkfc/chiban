@@ -64,6 +64,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/v1/groups/{group_id}/members", d.Auth.RequireUser(listMembersHandler(d)))
 	mux.Handle("DELETE /api/v1/groups/{group_id}/members/me", d.Auth.RequireUser(leaveGroupHandler(d)))
 	mux.Handle("POST /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(createInviteHandler(d)))
+	mux.Handle("GET /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(listInvitesHandler(d)))
 	mux.Handle("DELETE /api/v1/groups/{group_id}/invites/{invite_id}", d.Auth.RequireUser(revokeInviteHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)

@@ -139,12 +139,17 @@ func (s *store) createInvite(ctx context.Context, groupID, createdBy uuid.UUID, 
 
 // findUsableInvite applies expiry and revocation in the query, so no caller can
 // forget to check them.
+//
+// FOR UPDATE locks the invite row for the rest of the transaction: a revoke
+// arriving between this check and the membership insert has to wait, and then
+// finds the join already committed rather than silently letting it through.
 func (s *store) findUsableInvite(ctx context.Context, code string, now time.Time) (Invite, error) {
 	var i Invite
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, group_id, code, expires_at
 		FROM group_invites
 		WHERE code = $1 AND revoked_at IS NULL AND expires_at > $2
+		FOR UPDATE
 	`, code, now).Scan(&i.ID, &i.GroupID, &i.Code, &i.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Invite{}, ErrInviteInvalid
@@ -153,6 +158,29 @@ func (s *store) findUsableInvite(ctx context.Context, code string, now time.Time
 		return Invite{}, fmt.Errorf("group: find invite: %w", err)
 	}
 	return i, nil
+}
+
+func (s *store) listActiveInvites(ctx context.Context, groupID uuid.UUID, now time.Time) ([]Invite, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, group_id, code, expires_at
+		FROM group_invites
+		WHERE group_id = $1 AND revoked_at IS NULL AND expires_at > $2
+		ORDER BY created_at DESC
+	`, groupID, now)
+	if err != nil {
+		return nil, fmt.Errorf("group: list invites: %w", err)
+	}
+	defer rows.Close()
+
+	invites := []Invite{}
+	for rows.Next() {
+		var i Invite
+		if err := rows.Scan(&i.ID, &i.GroupID, &i.Code, &i.ExpiresAt); err != nil {
+			return nil, fmt.Errorf("group: scan invite: %w", err)
+		}
+		invites = append(invites, i)
+	}
+	return invites, rows.Err()
 }
 
 func (s *store) revokeInvite(ctx context.Context, groupID, inviteID uuid.UUID, now time.Time) error {

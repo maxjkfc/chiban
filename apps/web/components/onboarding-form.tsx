@@ -10,14 +10,9 @@ import {
   apiFetch,
   ApiRequestError,
   detectTimezone,
+  safeNextPath,
   type Profile,
 } from "@/lib/api";
-
-/** Only same-site paths, so a crafted ?next= cannot bounce users off-site. */
-function safeNext(next: string | null): string | null {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return null;
-  return next;
-}
 
 /**
  * V0.1 onboarding asks for a nickname and nothing else the user has to think
@@ -43,7 +38,7 @@ export function OnboardingForm() {
         method: "PATCH",
         body: { display_name: displayName, timezone },
       });
-      router.replace(safeNext(next) ?? "/today");
+      router.replace(safeNextPath(next) ?? "/today");
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.status === 401) {
         router.replace("/login");

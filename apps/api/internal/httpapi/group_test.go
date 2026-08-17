@@ -271,3 +271,56 @@ func TestCreateGroupRejectsInvalidNames(t *testing.T) {
 		}
 	}
 }
+
+// A revoked invite must disappear from the list the owner acts on, otherwise
+// the UI keeps offering a dead link.
+func TestInviteListShowsOnlyUsableInvites(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	created := app.CreateGroup("午餐團")
+	kept := app.CreateInvite(created.ID)
+	revoked := app.CreateInvite(created.ID)
+
+	if resp := app.Request(http.MethodDelete,
+		"/api/v1/groups/"+created.ID+"/invites/"+revoked.ID, nil,
+	); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	if _, err := app.DB.ExecContext(t.Context(),
+		`UPDATE group_invites SET expires_at = now() - interval '1 second' WHERE id = $1`,
+		kept.ID,
+	); err != nil {
+		t.Fatalf("expire invite: %v", err)
+	}
+	expired := kept
+	kept = app.CreateInvite(created.ID)
+
+	resp := app.Request(http.MethodGet, "/api/v1/groups/"+created.ID+"/invites", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var listed []testsupport.Invite
+	app.DecodeJSON(resp, &listed)
+	if len(listed) != 1 || listed[0].ID != kept.ID {
+		t.Fatalf("listed = %+v, want only %s (revoked %s, expired %s)",
+			listed, kept.ID, revoked.ID, expired.ID)
+	}
+}
+
+func TestNonMembersCannotListInvites(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	created := app.CreateGroup("午餐團")
+	app.Logout()
+
+	app.Onboard("outsider@example.com", "路人")
+	resp := app.Request(http.MethodGet, "/api/v1/groups/"+created.ID+"/invites", nil)
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+}

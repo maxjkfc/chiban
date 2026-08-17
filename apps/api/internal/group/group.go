@@ -151,6 +151,15 @@ func (s *Service) CreateInvite(ctx context.Context, userID, groupID uuid.UUID) (
 	return s.store.createInvite(ctx, groupID, userID, code, s.now().Add(InviteLifetime))
 }
 
+// ListInvites shows the group's usable invites. Any member may see them,
+// matching who may create them; only the owner may revoke.
+func (s *Service) ListInvites(ctx context.Context, userID, groupID uuid.UUID) ([]Invite, error) {
+	if _, err := s.store.findForMember(ctx, groupID, userID); err != nil {
+		return nil, err
+	}
+	return s.store.listActiveInvites(ctx, groupID, s.now())
+}
+
 // RevokeInvite kills a leaked link. Owner only, so one member cannot undo
 // another's invite.
 func (s *Service) RevokeInvite(ctx context.Context, userID, groupID, inviteID uuid.UUID) error {
@@ -173,13 +182,24 @@ func (s *Service) Join(ctx context.Context, userID uuid.UUID, code string) (Grou
 		return Group{}, ErrInviteInvalid
 	}
 
-	invite, err := s.store.findUsableInvite(ctx, code, s.now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Group{}, fmt.Errorf("group: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	txStore := &store{db: tx}
+	invite, err := txStore.findUsableInvite(ctx, code, s.now())
 	if err != nil {
 		return Group{}, err
 	}
-	if err := s.store.addMember(ctx, invite.GroupID, userID, RoleMember); err != nil {
+	if err := txStore.addMember(ctx, invite.GroupID, userID, RoleMember); err != nil {
 		return Group{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return Group{}, fmt.Errorf("group: commit: %w", err)
+	}
+
 	return s.store.findForMember(ctx, invite.GroupID, userID)
 }
 

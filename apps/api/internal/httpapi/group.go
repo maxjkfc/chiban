@@ -154,6 +154,31 @@ func createInviteHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+func listInvitesHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID, ok := pathUUID(w, r, "group_id")
+		if !ok {
+			return
+		}
+
+		invites, err := d.Group.ListInvites(r.Context(), auth.UserFromContext(r.Context()).ID, groupID)
+		if err != nil {
+			writeGroupError(w, d, err)
+			return
+		}
+
+		out := make([]inviteResponse, 0, len(invites))
+		for _, invite := range invites {
+			out = append(out, inviteResponse{
+				ID:        invite.ID.String(),
+				Code:      invite.Code,
+				ExpiresAt: invite.ExpiresAt.UTC().Format(timeFormat),
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
 func revokeInviteHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, ok := pathUUID(w, r, "group_id")

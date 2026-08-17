@@ -7,15 +7,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { apiFetch, ApiRequestError, type User } from "@/lib/api";
+import { apiFetch, ApiRequestError, safeNextPath, type User } from "@/lib/api";
 
 type Mode = "login" | "register";
-
-/** Only same-site paths, so a crafted ?next= cannot bounce users off-site. */
-function safeNext(next: string | null): string | null {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return null;
-  return next;
-}
 
 const copy = {
   login: {
@@ -58,7 +52,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     try {
       await apiFetch<User>(text.path, { method: "POST", body: { email, password } });
-      router.replace(safeNext(next) ?? "/today");
+      router.replace(safeNextPath(next) ?? "/today");
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
@@ -113,7 +107,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
         </Button>
       </form>
 
-      <Link href={text.switchHref} className="text-muted-foreground text-sm underline">
+      {/* Carry the invite forward: someone who already has an account has to
+          reach login without losing the group they were invited to. */}
+      <Link
+        href={next ? `${text.switchHref}?next=${encodeURIComponent(next)}` : text.switchHref}
+        className="text-muted-foreground text-sm underline"
+      >
         {text.switchText}
       </Link>
     </main>

@@ -96,3 +96,22 @@ export type Invite = {
   code: string;
   expires_at: string;
 };
+
+/**
+ * Sanitises a `?next=` value into a same-origin path.
+ *
+ * A prefix check on "/" is not enough: the URL parser normalises backslashes
+ * in special schemes, so "/\\evil.example" resolves to a different origin.
+ * Resolving against the current origin and comparing is the only check that
+ * cannot be talked around.
+ */
+export function safeNextPath(next: string | null | undefined): string | null {
+  if (!next) return null;
+  try {
+    const resolved = new URL(next, window.location.origin);
+    if (resolved.origin !== window.location.origin) return null;
+    return resolved.pathname + resolved.search;
+  } catch {
+    return null;
+  }
+}
