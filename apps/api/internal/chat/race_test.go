@@ -1,7 +1,9 @@
 package chat
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"testing"
 
@@ -112,4 +114,67 @@ func insertGroup(t *testing.T, db *sql.DB, ownerID uuid.UUID) uuid.UUID {
 		t.Fatalf("insert group: %v", err)
 	}
 	return id
+}
+
+// The other half of the same race: what the caller is told.
+//
+// React checks the message is live and only then writes, so the losing
+// interleaving cannot be arranged from outside — by the time a second request
+// could delete the message, React has already refused it for the ordinary
+// reason. This wraps the service's database handle to delete the message at
+// exactly the moment React has read it and not yet written, and asserts the
+// caller is told the reaction did not land rather than being answered "done".
+func TestAReactionThatLosesTheRaceIsReportedAsRefused(t *testing.T) {
+	db := openTestDB(t)
+	ctx := t.Context()
+
+	userID := insertUser(t, db, "mei@example.com")
+	groupID := insertGroup(t, db, userID)
+
+	plain := &store{db: db}
+	messageID, _, err := plain.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil)
+	if err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+
+	racing := &deleteAfterRead{DBTX: db, db: db, messageID: messageID}
+	service := NewService(racing, alwaysMember{}, NewHub())
+
+	err = service.React(ctx, userID, messageID, Reactions[0])
+
+	var invalid InvalidInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("React returned %v, want the caller to be told it was deleted", err)
+	}
+	if !racing.deleted {
+		t.Fatal("the message was never deleted, so this test proved nothing")
+	}
+}
+
+// deleteAfterRead deletes the message once, immediately after the first read
+// of it has been served. database/sql runs the query inside QueryRowContext,
+// so the caller still scans the row as it was before the delete — which is the
+// stale view the race is made of.
+type deleteAfterRead struct {
+	DBTX
+	db        *sql.DB
+	messageID uuid.UUID
+	deleted   bool
+}
+
+func (d *deleteAfterRead) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	row := d.DBTX.QueryRowContext(ctx, query, args...)
+	if !d.deleted {
+		d.deleted = true
+		if _, err := (&store{db: d.db}).softDelete(ctx, d.messageID); err != nil {
+			panic("delete during race: " + err.Error())
+		}
+	}
+	return row
+}
+
+type alwaysMember struct{}
+
+func (alwaysMember) IsMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
 }
