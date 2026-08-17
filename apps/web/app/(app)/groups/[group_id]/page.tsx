@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 
+import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
@@ -119,9 +120,14 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
         <h2 className="text-sm font-medium">成員</h2>
         <ul className="flex flex-col gap-1">
           {members.map((member) => (
-            <li key={member.user_id} className="flex justify-between text-sm">
+            <li key={member.user_id} className="flex items-center gap-3 text-sm">
+              <Avatar
+                mediaId={member.avatar_media_id}
+                displayName={member.display_name || "這位成員"}
+                className="size-8"
+              />
               {/* A member who joined before finishing onboarding has no name yet. */}
-              <span>{member.display_name || "（尚未設定暱稱）"}</span>
+              <span className="flex-1">{member.display_name || "（尚未設定暱稱）"}</span>
               {member.role === "owner" ? (
                 <span className="text-muted-foreground text-xs">管理者</span>
               ) : null}

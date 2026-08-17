@@ -26,9 +26,10 @@ type groupResponse struct {
 }
 
 type memberResponse struct {
-	UserID      string `json:"user_id"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
+	UserID        string `json:"user_id"`
+	DisplayName   string `json:"display_name"`
+	AvatarMediaID string `json:"avatar_media_id,omitempty"`
+	Role          string `json:"role"`
 }
 
 type inviteResponse struct {
@@ -116,7 +117,7 @@ func listMembersHandler(d Deps) http.HandlerFunc {
 		for _, m := range members {
 			userIDs = append(userIDs, m.UserID)
 		}
-		names, err := d.Profile.DisplayNames(r.Context(), userIDs)
+		summaries, err := d.Profile.Summaries(r.Context(), userIDs)
 		if err != nil {
 			writeGroupError(w, d, err)
 			return
@@ -124,11 +125,16 @@ func listMembersHandler(d Deps) http.HandlerFunc {
 
 		out := make([]memberResponse, 0, len(members))
 		for _, m := range members {
-			out = append(out, memberResponse{
+			summary := summaries[m.UserID]
+			member := memberResponse{
 				UserID:      m.UserID.String(),
-				DisplayName: names[m.UserID],
+				DisplayName: summary.DisplayName,
 				Role:        m.Role,
-			})
+			}
+			if summary.HasAvatar() {
+				member.AvatarMediaID = summary.AvatarMediaID.String()
+			}
+			out = append(out, member)
 		}
 		writeJSON(w, http.StatusOK, out)
 	}

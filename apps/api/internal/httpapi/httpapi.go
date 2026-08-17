@@ -42,7 +42,7 @@ func NewRouter(d Deps) http.Handler {
 		d.Auth = auth.NewService(d.DB)
 	}
 	if d.Profile == nil {
-		d.Profile = profile.NewService(d.DB)
+		d.Profile = profile.NewService(d.DB, d.Storage)
 	}
 	if d.Group == nil {
 		d.Group = group.NewService(d.DB)
@@ -61,6 +61,8 @@ func NewRouter(d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/me/profile", d.Auth.RequireUser(getProfileHandler(d)))
 	mux.Handle("PATCH /api/v1/me/profile", d.Auth.RequireUser(patchProfileHandler(d)))
+	mux.Handle("POST /api/v1/me/avatar", d.Auth.RequireUser(postAvatarHandler(d)))
+	mux.Handle("GET /api/v1/avatars/{media_id}", d.Auth.RequireUser(getAvatarHandler(d)))
 
 	mux.Handle("POST /api/v1/groups", d.Auth.RequireUser(createGroupHandler(d)))
 	mux.Handle("GET /api/v1/groups", d.Auth.RequireUser(listGroupsHandler(d)))

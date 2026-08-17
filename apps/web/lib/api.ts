@@ -71,7 +71,23 @@ export type User = {
 export type Profile = {
   display_name: string;
   timezone: string;
+  /**
+   * Application-level ID for the picture, absent when none is set. A new
+   * upload gets a new ID, so a cached URL never shows the previous face.
+   */
+  avatar_media_id?: string;
 };
+
+export type GroupMember = {
+  user_id: string;
+  display_name: string;
+  avatar_media_id?: string;
+  role: "owner" | "member";
+};
+
+export function avatarUrl(mediaId: string): string {
+  return apiUrl(`/api/v1/avatars/${mediaId}`);
+}
 
 /** The browser's own IANA zone, used to prefill onboarding. */
 export function detectTimezone(): string {
@@ -83,12 +99,6 @@ export type Group = {
   name: string;
   role: "owner" | "member";
   is_owner: boolean;
-};
-
-export type GroupMember = {
-  user_id: string;
-  display_name: string;
-  role: "owner" | "member";
 };
 
 export type Invite = {

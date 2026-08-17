@@ -159,8 +159,69 @@ func (a *App) RegisterUser(email string) User {
 
 // Profile is the profile shape the API returns.
 type Profile struct {
-	DisplayName string `json:"display_name"`
-	Timezone    string `json:"timezone"`
+	DisplayName   string `json:"display_name"`
+	Timezone      string `json:"timezone"`
+	AvatarMediaID string `json:"avatar_media_id"`
+}
+
+// GetProfile reads the current user's profile.
+func (a *App) GetProfile() Profile {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/me/profile", nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("get profile: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var p Profile
+	a.DecodeJSON(resp, &p)
+	return p
+}
+
+// PostAvatar uploads an avatar and returns the raw response, for tests that
+// expect it to be refused.
+func (a *App) PostAvatar(image []byte) *http.Response {
+	a.t.Helper()
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("avatar", "avatar.jpg")
+	if err != nil {
+		a.t.Fatalf("create avatar part: %v", err)
+	}
+	if _, err := part.Write(image); err != nil {
+		a.t.Fatalf("write avatar: %v", err)
+	}
+	if err := form.Close(); err != nil {
+		a.t.Fatalf("close form: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(a.t.Context(), http.MethodPost, a.BaseURL+"/api/v1/me/avatar", &body)
+	if err != nil {
+		a.t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		a.t.Fatalf("upload avatar: %v", err)
+	}
+	a.t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// UploadAvatar uploads an avatar and fails the test unless it was accepted.
+func (a *App) UploadAvatar(image []byte) Profile {
+	a.t.Helper()
+
+	resp := a.PostAvatar(image)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("upload avatar: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var p Profile
+	a.DecodeJSON(resp, &p)
+	return p
 }
 
 // SaveProfile completes onboarding for the currently logged-in user.
