@@ -203,6 +203,18 @@ func (s *Service) Join(ctx context.Context, userID uuid.UUID, code string) (Grou
 	return s.store.findForMember(ctx, invite.GroupID, userID)
 }
 
+// SharesGroup reports whether two users are currently in a group together.
+//
+// It exists so other domains can scope what one user may see of another
+// without reading this package's tables: membership stays defined in one
+// place, and leaving a group takes effect everywhere at once.
+func (s *Service) SharesGroup(ctx context.Context, a, b uuid.UUID) (bool, error) {
+	if a == b {
+		return true, nil
+	}
+	return s.store.sharesGroup(ctx, a, b)
+}
+
 // Leave removes the requester from the group. The owner is refused, which is
 // what keeps a group from becoming ownerless in a version with no ownership
 // transfer.

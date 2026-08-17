@@ -41,11 +41,12 @@ func NewRouter(d Deps) http.Handler {
 	if d.Auth == nil {
 		d.Auth = auth.NewService(d.DB)
 	}
-	if d.Profile == nil {
-		d.Profile = profile.NewService(d.DB, d.Storage)
-	}
 	if d.Group == nil {
 		d.Group = group.NewService(d.DB)
+	}
+	if d.Profile == nil {
+		// Group membership is what scopes who may see a picture.
+		d.Profile = profile.NewService(d.DB, d.Storage, d.Group)
 	}
 	if d.Meal == nil {
 		d.Meal = meal.NewService(d.DB, d.Storage)

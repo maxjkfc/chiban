@@ -127,6 +127,53 @@ func TestGroupMembersCarryTheirAvatars(t *testing.T) {
 	}
 }
 
+// An unguessable ID is not the authorization check. Someone who shares no
+// group with the owner must be refused even holding a valid media ID, and
+// leaving a group has to take effect immediately.
+func TestAvatarsAreScopedToPeopleYouShareAGroupWith(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	owner := app.UploadAvatar(testsupport.JPEG(t, 200, 200))
+	created := app.CreateGroup("午餐團")
+	invite := app.CreateInvite(created.ID)
+	app.Logout()
+
+	// A stranger holding the ID gets the same answer as for an unknown one.
+	app.Onboard("stranger@example.com", "路人")
+	if resp := app.Request(http.MethodGet, "/api/v1/avatars/"+owner.AvatarMediaID, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("stranger: status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+	app.Logout()
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.JoinGroup(invite.Code)
+	if resp := app.Request(http.MethodGet, "/api/v1/avatars/"+owner.AvatarMediaID, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("group mate: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Leaving revokes it, without the media ID changing.
+	if resp := app.Request(http.MethodDelete, "/api/v1/groups/"+created.ID+"/members/me", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("leave: status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if resp := app.Request(http.MethodGet, "/api/v1/avatars/"+owner.AvatarMediaID, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("after leaving: status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestYouCanAlwaysSeeYourOwnAvatar(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	// No groups at all, so this only passes if owners are allowed outright.
+	uploaded := app.UploadAvatar(testsupport.JPEG(t, 200, 200))
+
+	resp := app.Request(http.MethodGet, "/api/v1/avatars/"+uploaded.AvatarMediaID, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
 func TestAvatarsRequireASession(t *testing.T) {
 	app := testsupport.NewApp(t)
 	app.Onboard("mei@example.com", "小美")

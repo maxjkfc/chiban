@@ -124,6 +124,22 @@ func (s *store) listMembers(ctx context.Context, groupID uuid.UUID) ([]Member, e
 	return members, rows.Err()
 }
 
+func (s *store) sharesGroup(ctx context.Context, a, b uuid.UUID) (bool, error) {
+	var shares bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM group_members ma
+			JOIN group_members mb ON mb.group_id = ma.group_id
+			WHERE ma.user_id = $1 AND mb.user_id = $2
+		)
+	`, a, b).Scan(&shares)
+	if err != nil {
+		return false, fmt.Errorf("group: shares group: %w", err)
+	}
+	return shares, nil
+}
+
 func (s *store) createInvite(ctx context.Context, groupID, createdBy uuid.UUID, code string, expiresAt time.Time) (Invite, error) {
 	var i Invite
 	err := s.db.QueryRowContext(ctx, `

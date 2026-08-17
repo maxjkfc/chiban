@@ -111,8 +111,8 @@ func postAvatarHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// getAvatarHandler streams an avatar to any signed-in user who can name it.
-// Media IDs are unguessable and only handed out through a group's member list.
+// getAvatarHandler streams an avatar to its owner or to someone currently in a
+// group with them; anyone else gets the same answer as an unknown ID.
 func getAvatarHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mediaID, ok := pathUUID(w, r, "media_id")
@@ -120,7 +120,8 @@ func getAvatarHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		reader, contentType, err := d.Profile.OpenAvatar(r.Context(), mediaID)
+		reader, contentType, err := d.Profile.OpenAvatar(r.Context(),
+			auth.UserFromContext(r.Context()).ID, mediaID)
 		if err != nil {
 			writeProfileError(w, d, err)
 			return

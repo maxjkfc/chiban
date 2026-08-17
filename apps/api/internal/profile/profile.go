@@ -8,6 +8,7 @@ package profile
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -69,14 +70,29 @@ type Input struct {
 // Bucket is where avatars live. Clients never see this name.
 const Bucket = "avatars"
 
+// Viewership answers whether one user may see another's picture. The group
+// domain implements it; keeping it an interface here means this package never
+// reads membership tables it does not own.
+type Viewership interface {
+	SharesGroup(ctx context.Context, a, b uuid.UUID) (bool, error)
+}
+
 type Service struct {
+	db      *sql.DB
 	store   *store
 	objects storage.ObjectStorage
+	viewers Viewership
 	newName func(userID uuid.UUID, ext string) string
 }
 
-func NewService(db DBTX, objects storage.ObjectStorage) *Service {
-	return &Service{store: &store{db: db}, objects: objects, newName: objectName}
+func NewService(db *sql.DB, objects storage.ObjectStorage, viewers Viewership) *Service {
+	return &Service{
+		db:      db,
+		store:   &store{db: db},
+		objects: objects,
+		viewers: viewers,
+		newName: objectName,
+	}
 }
 
 // SaveAvatar stores a new picture and points the profile at it.
@@ -96,31 +112,21 @@ func (s *Service) SaveAvatar(ctx context.Context, userID uuid.UUID, data []byte)
 		return Profile{}, err
 	}
 
-	current, err := s.store.find(ctx, userID)
-	if err != nil {
+	if _, err := s.store.find(ctx, userID); err != nil {
 		// No profile means onboarding is unfinished; there is nothing to
 		// attach a picture to yet.
 		return Profile{}, err
 	}
 
-	// Where the outgoing picture lives has to be read before the pointer
-	// moves: afterwards the old media ID matches no row, and the object could
-	// never be found again.
-	var previous storedAvatar
-	if current.HasAvatar() {
-		previous, err = s.store.findAvatarObjectForUser(ctx, userID)
-		if err != nil {
-			return Profile{}, err
-		}
-	}
-
+	// Upload before the transaction: network I/O inside one would hold the row
+	// lock for as long as storage takes to answer.
 	object, err := s.objects.Upload(ctx, Bucket,
 		s.newName(userID, sanitized.Extension()), sanitized.ContentType, bytes.NewReader(sanitized.Data))
 	if err != nil {
 		return Profile{}, fmt.Errorf("profile: upload avatar: %w", err)
 	}
 
-	updated, err := s.store.setAvatar(ctx, userID, uuid.New(), object)
+	updated, previous, err := s.swapAvatar(ctx, userID, object)
 	if err != nil {
 		// The upload succeeded but the pointer did not: drop the orphan.
 		_ = s.objects.Delete(context.WithoutCancel(ctx), object.Bucket, object.Name)
@@ -135,16 +141,58 @@ func (s *Service) SaveAvatar(ctx context.Context, userID uuid.UUID, data []byte)
 	return updated, nil
 }
 
-// OpenAvatar streams a stored avatar.
+// swapAvatar points the profile at a new object and reports which one it
+// replaced.
 //
-// Any signed-in user may read one they can name. Media IDs are unguessable and
-// are only ever handed out through a group's member list, so in practice the
-// reachable set is the people you already share a group with — and a display
-// name and picture are, by design, the only things a group sees.
-func (s *Service) OpenAvatar(ctx context.Context, mediaID uuid.UUID) (io.ReadCloser, string, error) {
+// Reading the outgoing location and moving the pointer happen under one row
+// lock. Two uploads racing each other would otherwise both see the same
+// previous object, each delete only that one, and leave the loser's upload
+// unreferenced in storage forever. The lock also means the old location is
+// still readable: once the pointer has moved, nothing in the row remembers it.
+func (s *Service) swapAvatar(ctx context.Context, userID uuid.UUID, object storage.Object) (Profile, storedAvatar, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Profile{}, storedAvatar{}, fmt.Errorf("profile: begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	txStore := &store{db: tx}
+	previous, err := txStore.lockAvatarForUser(ctx, userID)
+	if err != nil {
+		return Profile{}, storedAvatar{}, err
+	}
+
+	updated, err := txStore.setAvatar(ctx, userID, uuid.New(), object)
+	if err != nil {
+		return Profile{}, storedAvatar{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Profile{}, storedAvatar{}, fmt.Errorf("profile: commit: %w", err)
+	}
+	return updated, previous, nil
+}
+
+// OpenAvatar streams a stored avatar to someone allowed to see it: its owner,
+// or a user currently in a group with them.
+//
+// An unguessable ID is not the check. Every other media read in this codebase
+// re-verifies a live relationship on each request, and MVP_SPEC §6.1 scopes a
+// picture to the groups you are in — so leaving a group has to stop working
+// immediately, and an ID that leaks by any other route must be useless.
+func (s *Service) OpenAvatar(ctx context.Context, requesterID, mediaID uuid.UUID) (io.ReadCloser, string, error) {
 	stored, err := s.store.findAvatarObject(ctx, mediaID)
 	if err != nil {
 		return nil, "", err
+	}
+
+	allowed, err := s.viewers.SharesGroup(ctx, requesterID, stored.OwnerID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !allowed {
+		// Same answer as an unknown ID: whether a picture exists is not
+		// something a stranger gets to learn.
+		return nil, "", ErrAvatarNotFound
 	}
 
 	reader, object, err := s.objects.Open(ctx, stored.Bucket, stored.ObjectName)

@@ -135,5 +135,5 @@ Dark mode 的 token 已備齊（`.dark`），但目前沒有切換器，實際�
 ## 目前缺口
 
 - 無 dark mode 切換器（token 已備）。
-- 無 Avatar / Badge / Modal / Toast——等 Slice 5 聊天室出現實際使用點再建。
+- 無 Badge / Modal / Toast——等實際使用點出現再建。Avatar 已於 slice 6 建立。
 - 動效只有按壓與 spinner；照片上傳、訊息進場的動畫留給 Slice 8 UX polish。

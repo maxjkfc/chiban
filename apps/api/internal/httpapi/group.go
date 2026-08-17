@@ -98,8 +98,8 @@ func getGroupHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// listMembersHandler asks the profile domain for display names rather than
-// joining across domains in one query.
+// listMembersHandler asks the profile domain for each member's name and
+// avatar rather than joining across domains in one query.
 func listMembersHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, ok := pathUUID(w, r, "group_id")

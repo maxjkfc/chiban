@@ -21,6 +21,7 @@ type DBTX interface {
 // storedAvatar is where an avatar actually lives. Nothing outside this package
 // sees a bucket or an object name.
 type storedAvatar struct {
+	OwnerID     uuid.UUID
 	Bucket      string
 	ObjectName  string
 	ContentType string
@@ -38,13 +39,13 @@ func (s *store) find(ctx context.Context, userID uuid.UUID) (Profile, error) {
 		FROM profiles
 		WHERE user_id = $1
 	`, userID).Scan(&p.UserID, &p.DisplayName, &p.Timezone, &avatarMediaID, &p.CreatedAt, &p.UpdatedAt)
-	p.AvatarMediaID = avatarMediaID.UUID
 	if errors.Is(err, sql.ErrNoRows) {
 		return Profile{}, ErrNotFound
 	}
 	if err != nil {
 		return Profile{}, fmt.Errorf("profile: find: %w", err)
 	}
+	p.AvatarMediaID = avatarMediaID.UUID
 	return p, nil
 }
 
@@ -93,22 +94,30 @@ func (s *store) setAvatar(ctx context.Context, userID, mediaID uuid.UUID, object
 	return p, nil
 }
 
-// findAvatarObjectForUser resolves whose avatar it is, rather than which one.
-// Replacement needs this before the pointer moves: afterwards the old media ID
-// matches no row and the previous object could never be found again.
-func (s *store) findAvatarObjectForUser(ctx context.Context, userID uuid.UUID) (storedAvatar, error) {
-	var a storedAvatar
+// lockAvatarForUser takes the profile row and reports where the current
+// picture lives, or a zero value when there is none.
+//
+// FOR UPDATE holds the row for the rest of the transaction, so a second upload
+// for the same user waits rather than racing this one to the same conclusion.
+func (s *store) lockAvatarForUser(ctx context.Context, userID uuid.UUID) (storedAvatar, error) {
+	var (
+		a          storedAvatar
+		bucket     sql.NullString
+		objectName sql.NullString
+	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT avatar_bucket, avatar_object_name, avatar_content_type
+		SELECT user_id, avatar_bucket, avatar_object_name
 		FROM profiles
-		WHERE user_id = $1 AND avatar_media_id IS NOT NULL
-	`, userID).Scan(&a.Bucket, &a.ObjectName, &a.ContentType)
+		WHERE user_id = $1
+		FOR UPDATE
+	`, userID).Scan(&a.OwnerID, &bucket, &objectName)
 	if errors.Is(err, sql.ErrNoRows) {
-		return storedAvatar{}, ErrAvatarNotFound
+		return storedAvatar{}, ErrNotFound
 	}
 	if err != nil {
-		return storedAvatar{}, fmt.Errorf("profile: find avatar for user: %w", err)
+		return storedAvatar{}, fmt.Errorf("profile: lock avatar: %w", err)
 	}
+	a.Bucket, a.ObjectName = bucket.String, objectName.String
 	return a, nil
 }
 
@@ -118,10 +127,10 @@ func (s *store) findAvatarObjectForUser(ctx context.Context, userID uuid.UUID) (
 func (s *store) findAvatarObject(ctx context.Context, mediaID uuid.UUID) (storedAvatar, error) {
 	var a storedAvatar
 	err := s.db.QueryRowContext(ctx, `
-		SELECT avatar_bucket, avatar_object_name, avatar_content_type
+		SELECT user_id, avatar_bucket, avatar_object_name, avatar_content_type
 		FROM profiles
 		WHERE avatar_media_id = $1
-	`, mediaID).Scan(&a.Bucket, &a.ObjectName, &a.ContentType)
+	`, mediaID).Scan(&a.OwnerID, &a.Bucket, &a.ObjectName, &a.ContentType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedAvatar{}, ErrAvatarNotFound
 	}
