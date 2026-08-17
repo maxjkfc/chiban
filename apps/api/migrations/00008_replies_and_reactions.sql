@@ -1,0 +1,26 @@
+-- +goose Up
+-- A reply is an ordinary message pointing at another one. V0.1 has no separate
+-- comment domain: a comment on a meal and a reply in chat are the same thing,
+-- so the thread structure lives on the message itself.
+ALTER TABLE chat_messages
+    ADD COLUMN reply_to_message_id uuid REFERENCES chat_messages (id) ON DELETE CASCADE;
+
+CREATE TABLE message_reactions (
+    message_id uuid NOT NULL REFERENCES chat_messages (id) ON DELETE CASCADE,
+    user_id    uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    -- Which emoji are offered is a product decision that changes without a
+    -- schema change, so the set lives in the application. The length bound is
+    -- here to keep the column from becoming a place to put anything at all.
+    reaction_type text NOT NULL CHECK (length(reaction_type) BETWEEN 1 AND 16),
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    -- One person, one message, one kind. This is what makes a repeated tap
+    -- impossible to count twice, rather than the application remembering to
+    -- check first.
+    PRIMARY KEY (message_id, user_id, reaction_type)
+);
+
+-- +goose Down
+DROP TABLE message_reactions;
+
+ALTER TABLE chat_messages
+    DROP COLUMN reply_to_message_id;

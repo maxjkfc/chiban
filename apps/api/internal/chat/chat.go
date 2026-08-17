@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,7 +23,20 @@ var (
 	// ErrNotMember is returned for groups the user cannot see, matching the
 	// group domain's answer so chat never reveals more than membership does.
 	ErrNotMember = errors.New("chat: not a member")
+	// ErrNotFound is returned for a message that does not exist.
+	ErrNotFound = errors.New("chat: message not found")
+	// ErrNotAuthor covers deleting someone else's message: you can see it, you
+	// just do not get to remove it.
+	ErrNotAuthor = errors.New("chat: not the author")
 )
+
+// Reactions is the set V0.1 offers. Which emoji are on the list is a product
+// decision, so it lives here rather than in a database constraint.
+var Reactions = []string{"❤️", "😂", "🔥", "👏", "👀"}
+
+func isKnownReaction(reactionType string) bool {
+	return slices.Contains(Reactions, reactionType)
+}
 
 // InvalidInputError describes input the caller can fix.
 type InvalidInputError struct {
@@ -54,6 +68,60 @@ type Message struct {
 	Content         string
 	ClientMessageID uuid.UUID
 	CreatedAt       time.Time
+	// Deleted marks a tombstone. The row stays where it was so replies to it
+	// keep their context; only the content is gone.
+	Deleted bool
+	// ReplyTo is the message this one answers, when it answers one. It is
+	// joined at read time rather than copied at write time, so deleting the
+	// parent is reflected everywhere at once.
+	ReplyTo *ReplyPreview
+	// Reactions summarises who reacted with what, from the perspective of the
+	// reader who asked. Never filled on a broadcast: Mine is per-reader and a
+	// broadcast goes to everyone.
+	Reactions []ReactionSummary
+}
+
+// ReplyPreview is as much of the parent as a quote needs.
+type ReplyPreview struct {
+	ID      uuid.UUID
+	UserID  uuid.UUID
+	Content string
+	Deleted bool
+}
+
+// ReactionSummary is one emoji's tally on a message.
+type ReactionSummary struct {
+	Type  string
+	Count int
+	// Mine is whether the reader who asked is one of the Count.
+	Mine bool
+}
+
+// ReactionChange is one person adding or removing one reaction.
+type ReactionChange struct {
+	MessageID uuid.UUID
+	UserID    uuid.UUID
+	Type      string
+	Added     bool
+}
+
+// Event kinds delivered over the socket.
+const (
+	EventMessage  = "message"
+	EventReaction = "reaction"
+	EventDeleted  = "deleted"
+)
+
+// Event is one thing that happened in a group.
+//
+// Which field carries the payload depends on Kind; the others are zero. A
+// deletion sends only an id rather than the tombstoned message, because a
+// message carries per-reader reaction state that a single broadcast cannot.
+type Event struct {
+	Kind      string
+	Message   Message
+	Reaction  ReactionChange
+	MessageID uuid.UUID
 }
 
 // Cursor is where this message sits in its group's history.
@@ -73,6 +141,9 @@ type Page struct {
 type SendInput struct {
 	Content         string
 	ClientMessageID uuid.UUID
+	// ReplyToMessageID makes this message an answer to another one in the same
+	// group. A reply is an ordinary message; V0.1 has no comment domain.
+	ReplyToMessageID *uuid.UUID
 }
 
 // Membership answers whether a user belongs to a group. The group domain
@@ -120,16 +191,137 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		}
 	}
 
-	message, inserted, err := s.store.insertOrGet(ctx, groupID, userID, TypeText, content, in.ClientMessageID)
+	if in.ReplyToMessageID != nil {
+		// A reply must point at something in the same conversation, or the
+		// quote would show a stranger's message from a group you cannot read.
+		parent, err := s.store.get(ctx, *in.ReplyToMessageID)
+		switch {
+		case errors.Is(err, ErrNotFound), err == nil && parent.GroupID != groupID:
+			return Message{}, InvalidInputError{
+				Field:   "reply_to_message_id",
+				Message: "is not a message in this group",
+			}
+		case err != nil:
+			return Message{}, err
+		}
+	}
+
+	id, inserted, err := s.store.insertOrGet(
+		ctx, groupID, userID, TypeText, content, in.ClientMessageID, in.ReplyToMessageID)
 	if err != nil {
 		return Message{}, err
 	}
+
+	message, err := s.store.get(ctx, id)
+	if err != nil {
+		return Message{}, err
+	}
+	if message.GroupID != groupID {
+		// The id is unique per sender, not per sender and group, so a client
+		// that reuses one across groups would otherwise be handed a message
+		// belonging to a conversation it did not ask about. Say so instead.
+		return Message{}, InvalidInputError{
+			Field:   "client_message_id",
+			Message: "was already used for a message in another group",
+		}
+	}
+
 	if inserted {
 		// Only a genuinely new message is announced; a retry must not make
 		// everyone's screen show it twice.
-		s.hub.Broadcast(groupID, message)
+		s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
 	}
 	return message, nil
+}
+
+// Delete tombstones the caller's own message.
+//
+// The row stays: replies to it keep their place in the conversation and still
+// show what they were answering, which is the whole point of not cascading.
+func (s *Service) Delete(ctx context.Context, userID, messageID uuid.UUID) error {
+	message, err := s.store.get(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if err := s.requireMember(ctx, userID, message.GroupID); err != nil {
+		return err
+	}
+	if message.UserID != userID {
+		return ErrNotAuthor
+	}
+
+	deleted, err := s.store.softDelete(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		s.hub.Broadcast(message.GroupID, Event{Kind: EventDeleted, MessageID: messageID})
+	}
+	return nil
+}
+
+// React adds one of the caller's reactions to a message.
+//
+// Repeating it is deliberately not an error: a double tap on a phone must
+// leave one reaction and one broadcast, not two of either.
+func (s *Service) React(ctx context.Context, userID, messageID uuid.UUID, reactionType string) error {
+	return s.changeReaction(ctx, userID, messageID, reactionType, true)
+}
+
+// Unreact takes back one of the caller's own reactions. There is no way to
+// remove anyone else's: the delete is scoped by user_id in the statement.
+func (s *Service) Unreact(ctx context.Context, userID, messageID uuid.UUID, reactionType string) error {
+	return s.changeReaction(ctx, userID, messageID, reactionType, false)
+}
+
+func (s *Service) changeReaction(
+	ctx context.Context,
+	userID, messageID uuid.UUID,
+	reactionType string,
+	add bool,
+) error {
+	if !isKnownReaction(reactionType) {
+		return InvalidInputError{
+			Field:   "reaction_type",
+			Message: "is not one of the available reactions",
+		}
+	}
+
+	message, err := s.store.get(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	// Reacting is writing into a group, so it is gated on membership exactly
+	// like sending is.
+	if err := s.requireMember(ctx, userID, message.GroupID); err != nil {
+		return err
+	}
+	if add && message.Deleted {
+		return InvalidInputError{Field: "message_id", Message: "has been deleted"}
+	}
+
+	var changed bool
+	if add {
+		changed, err = s.store.addReaction(ctx, messageID, userID, reactionType)
+	} else {
+		changed, err = s.store.removeReaction(ctx, messageID, userID, reactionType)
+	}
+	if err != nil {
+		return err
+	}
+
+	if changed {
+		s.hub.Broadcast(message.GroupID, Event{
+			Kind: EventReaction,
+			Reaction: ReactionChange{
+				MessageID: messageID,
+				UserID:    userID,
+				Type:      reactionType,
+				Added:     add,
+			},
+		})
+	}
+	return nil
 }
 
 // History returns the page ending at before, or the newest page when before is
@@ -173,7 +365,29 @@ func (s *Service) History(ctx context.Context, userID, groupID uuid.UUID, before
 	for i := len(messages) - 1; i >= 0; i-- {
 		page.Messages = append(page.Messages, messages[i])
 	}
+
+	if err := s.attachReactions(ctx, userID, page.Messages); err != nil {
+		return Page{}, err
+	}
 	return page, nil
+}
+
+// attachReactions fills in a page's tallies in one query rather than one per
+// message.
+func (s *Service) attachReactions(ctx context.Context, readerID uuid.UUID, messages []Message) error {
+	ids := make([]uuid.UUID, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, m.ID)
+	}
+
+	byMessage, err := s.store.reactionsFor(ctx, readerID, ids)
+	if err != nil {
+		return err
+	}
+	for i := range messages {
+		messages[i].Reactions = byMessage[messages[i].ID]
+	}
+	return nil
 }
 
 // Subscribe attaches a connection to a group's fan-out, after checking that

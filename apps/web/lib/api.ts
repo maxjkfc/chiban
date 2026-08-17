@@ -182,7 +182,40 @@ export type ChatMessage = {
   /** The sender's own id for the message, which makes a retry safe. */
   client_message_id: string;
   created_at: string;
+  /** A removed message keeps its place with its content gone, so the replies
+   * underneath it still read as answers to something. */
+  deleted: boolean;
+  reply_to?: ReplyPreview;
+  reactions: MessageReaction[];
 };
+
+/** As much of a quoted message as the reply needs to show. */
+export type ReplyPreview = {
+  id: string;
+  user_id: string;
+  content: string;
+  deleted: boolean;
+};
+
+export type MessageReaction = {
+  reaction_type: string;
+  count: number;
+  /** Whether tapping again would take it back. */
+  mine: boolean;
+};
+
+export type ReactionChange = {
+  message_id: string;
+  user_id: string;
+  reaction_type: string;
+  added: boolean;
+};
+
+/** One push from the realtime feed. The kind decides which field is filled. */
+export type SocketEvent =
+  | { type: "message"; message: ChatMessage }
+  | { type: "reaction"; reaction: ReactionChange }
+  | { type: "deleted"; message_id: string };
 
 export type MessagePage = {
   messages: ChatMessage[];

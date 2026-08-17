@@ -515,13 +515,54 @@ func truncateAll(t *testing.T, ctx context.Context, db *sql.DB) {
 // socket. One shape for both is the point: a message read from history and the
 // same message pushed live must be indistinguishable.
 type Message struct {
-	ID              string `json:"id"`
-	GroupID         string `json:"group_id"`
-	UserID          string `json:"user_id"`
-	Type            string `json:"type"`
-	Content         string `json:"content"`
-	ClientMessageID string `json:"client_message_id"`
-	CreatedAt       string `json:"created_at"`
+	ID              string     `json:"id"`
+	GroupID         string     `json:"group_id"`
+	UserID          string     `json:"user_id"`
+	Type            string     `json:"type"`
+	Content         string     `json:"content"`
+	ClientMessageID string     `json:"client_message_id"`
+	CreatedAt       string     `json:"created_at"`
+	Deleted         bool       `json:"deleted"`
+	ReplyTo         *ReplyTo   `json:"reply_to"`
+	Reactions       []Reaction `json:"reactions"`
+}
+
+// ReplyTo is the quoted parent of a reply.
+type ReplyTo struct {
+	ID      string `json:"id"`
+	UserID  string `json:"user_id"`
+	Content string `json:"content"`
+	Deleted bool   `json:"deleted"`
+}
+
+// Reaction is one emoji's tally on a message.
+type Reaction struct {
+	Type  string `json:"reaction_type"`
+	Count int    `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+// SocketEvent is one push from the realtime feed.
+type SocketEvent struct {
+	Type     string   `json:"type"`
+	Message  *Message `json:"message"`
+	Reaction *struct {
+		MessageID string `json:"message_id"`
+		UserID    string `json:"user_id"`
+		Type      string `json:"reaction_type"`
+		Added     bool   `json:"added"`
+	} `json:"reaction"`
+	MessageID string `json:"message_id"`
+}
+
+// Find returns the tally for one emoji, and whether there is one at all.
+func (m Message) Find(reactionType string) (Reaction, bool) {
+	for _, r := range m.Reactions {
+		if r.Type == reactionType {
+			return r, true
+		}
+	}
+	return Reaction{}, false
 }
 
 // MessagePage is one screen of history.
@@ -613,18 +654,29 @@ func (a *App) ConnectChat(groupID string) *ChatSocket {
 	return socket
 }
 
-// Next waits for the next pushed message.
-func (s *ChatSocket) Next() Message {
+// NextEvent waits for the next push of any kind.
+func (s *ChatSocket) NextEvent() SocketEvent {
 	s.t.Helper()
 
 	ctx, cancel := context.WithTimeout(s.t.Context(), 5*time.Second)
 	defer cancel()
 
-	var m Message
-	if err := wsjson.Read(ctx, s.conn, &m); err != nil {
+	var event SocketEvent
+	if err := wsjson.Read(ctx, s.conn, &event); err != nil {
 		s.t.Fatalf("read from chat socket: %v", err)
 	}
-	return m
+	return event
+}
+
+// Next waits for the next pushed message, failing if something else arrives.
+func (s *ChatSocket) Next() Message {
+	s.t.Helper()
+
+	event := s.NextEvent()
+	if event.Type != "message" || event.Message == nil {
+		s.t.Fatalf("expected a message, got a %q event", event.Type)
+	}
+	return *event.Message
 }
 
 // ExpectSilence fails if anything arrives in the next moment. Used where the
@@ -636,10 +688,10 @@ func (s *ChatSocket) ExpectSilence() {
 	ctx, cancel := context.WithTimeout(s.t.Context(), 300*time.Millisecond)
 	defer cancel()
 
-	var m Message
-	err := wsjson.Read(ctx, s.conn, &m)
+	var event SocketEvent
+	err := wsjson.Read(ctx, s.conn, &event)
 	if err == nil {
-		s.t.Fatalf("expected no broadcast, got %q", m.Content)
+		s.t.Fatalf("expected no broadcast, got a %q event", event.Type)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		s.t.Fatalf("read from chat socket: %v", err)
@@ -655,8 +707,67 @@ func (s *ChatSocket) ExpectNoMessage() {
 	ctx, cancel := context.WithTimeout(s.t.Context(), 500*time.Millisecond)
 	defer cancel()
 
-	var m Message
-	if err := wsjson.Read(ctx, s.conn, &m); err == nil {
-		s.t.Fatalf("expected no message, got %q", m.Content)
+	var event SocketEvent
+	if err := wsjson.Read(ctx, s.conn, &event); err == nil {
+		s.t.Fatalf("expected no message, got a %q event", event.Type)
 	}
+}
+
+// PostReply sends a message that answers another one.
+func (a *App) PostReply(groupID, content, replyToMessageID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", map[string]string{
+		"content":             content,
+		"client_message_id":   uuid.NewString(),
+		"reply_to_message_id": replyToMessageID,
+	})
+}
+
+// Reply sends a reply and fails the test unless it was accepted.
+func (a *App) Reply(groupID, content, replyToMessageID string) Message {
+	a.t.Helper()
+
+	resp := a.PostReply(groupID, content, replyToMessageID)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("reply: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var m Message
+	a.DecodeJSON(resp, &m)
+	return m
+}
+
+// PostReaction adds a reaction, returning the raw response for tests that
+// expect it to be refused.
+func (a *App) PostReaction(messageID, reactionType string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/messages/"+messageID+"/reactions",
+		map[string]string{"reaction_type": reactionType})
+}
+
+// React adds a reaction and fails the test unless it was accepted.
+func (a *App) React(messageID, reactionType string) {
+	a.t.Helper()
+
+	resp := a.PostReaction(messageID, reactionType)
+	if resp.StatusCode != http.StatusNoContent {
+		a.t.Fatalf("react: status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+}
+
+// Unreact removes one of the caller's reactions.
+func (a *App) Unreact(messageID, reactionType string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodDelete,
+		"/api/v1/messages/"+messageID+"/reactions/"+url.PathEscape(reactionType), nil)
+}
+
+// DeleteMessage tombstones a message.
+func (a *App) DeleteMessage(messageID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodDelete, "/api/v1/messages/"+messageID, nil)
 }

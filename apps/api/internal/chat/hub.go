@@ -29,17 +29,17 @@ func NewHub() *Hub {
 type Subscription struct {
 	hub     *Hub
 	groupID uuid.UUID
-	// Messages is closed when the subscription is closed.
-	Messages chan Message
+	// Events is closed when the subscription is closed.
+	Events chan Event
 
 	closeOnce sync.Once
 }
 
 func (h *Hub) Subscribe(groupID uuid.UUID) *Subscription {
 	sub := &Subscription{
-		hub:      h,
-		groupID:  groupID,
-		Messages: make(chan Message, subscriberBuffer),
+		hub:     h,
+		groupID: groupID,
+		Events:  make(chan Event, subscriberBuffer),
 	}
 
 	h.mu.Lock()
@@ -52,17 +52,17 @@ func (h *Hub) Subscribe(groupID uuid.UUID) *Subscription {
 	return sub
 }
 
-// Broadcast delivers a message to every live subscription for its group.
-func (h *Hub) Broadcast(groupID uuid.UUID, message Message) {
+// Broadcast delivers an event to every live subscription for its group.
+func (h *Hub) Broadcast(groupID uuid.UUID, event Event) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	for sub := range h.groups[groupID] {
 		select {
-		case sub.Messages <- message:
+		case sub.Events <- event:
 		default:
 			// This connection is too far behind to catch up. Disconnecting it
-			// is more honest than skipping the message: the client notices the
+			// is more honest than skipping the event: the client notices the
 			// close, reconnects and refetches, where a silent drop would leave
 			// a hole in its history that nothing ever fills. Blocking instead
 			// would stall delivery to everyone else.
@@ -89,5 +89,5 @@ func (h *Hub) removeLocked(sub *Subscription) {
 			delete(h.groups, sub.groupID)
 		}
 	}
-	sub.closeOnce.Do(func() { close(sub.Messages) })
+	sub.closeOnce.Do(func() { close(sub.Events) })
 }

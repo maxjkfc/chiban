@@ -26,12 +26,12 @@ func TestAStalledSubscriberIsDisconnected(t *testing.T) {
 
 	// Nobody reads from stalled, so its buffer fills.
 	for range 1000 {
-		hub.Broadcast(groupID, chat.Message{GroupID: groupID, Content: "洗版"})
+		hub.Broadcast(groupID, chat.Event{Kind: chat.EventMessage, Message: chat.Message{GroupID: groupID, Content: "洗版"}})
 	}
 
 	drained := make(chan struct{})
 	go func() {
-		for range stalled.Messages {
+		for range stalled.Events {
 		}
 		close(drained)
 	}()
@@ -55,24 +55,24 @@ func TestAStalledSubscriberDoesNotStopTheOthers(t *testing.T) {
 	defer reading.Close()
 
 	// Drain one subscriber as a real connection would.
-	received := make(chan chat.Message, 1)
+	received := make(chan chat.Event, 1)
 	go func() {
-		for message := range reading.Messages {
+		for event := range reading.Events {
 			select {
-			case received <- message:
+			case received <- event:
 			default:
 			}
 		}
 	}()
 
 	for range 1000 {
-		hub.Broadcast(groupID, chat.Message{GroupID: groupID, Content: "還在嗎"})
+		hub.Broadcast(groupID, chat.Event{Kind: chat.EventMessage, Message: chat.Message{GroupID: groupID, Content: "還在嗎"}})
 	}
 
 	select {
-	case message := <-received:
-		if message.Content != "還在嗎" {
-			t.Fatalf("received %q, want %q", message.Content, "還在嗎")
+	case event := <-received:
+		if event.Message.Content != "還在嗎" {
+			t.Fatalf("received %q, want %q", event.Message.Content, "還在嗎")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a stalled subscriber stopped delivery to a healthy one")

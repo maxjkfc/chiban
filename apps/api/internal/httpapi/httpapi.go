@@ -97,6 +97,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(sendMessageHandler(d)))
 	mux.Handle("GET /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(listMessagesHandler(d)))
 	mux.Handle("GET /api/v1/ws/groups/{group_id}", d.Auth.RequireUser(chatSocketHandler(d)))
+	mux.Handle("DELETE /api/v1/messages/{message_id}", d.Auth.RequireUser(deleteMessageHandler(d)))
+	mux.Handle("POST /api/v1/messages/{message_id}/reactions", d.Auth.RequireUser(addReactionHandler(d)))
+	mux.Handle("DELETE /api/v1/messages/{message_id}/reactions/{reaction_type}",
+		d.Auth.RequireUser(removeReactionHandler(d)))
+	mux.Handle("GET /api/v1/reaction-types", d.Auth.RequireUser(availableReactionsHandler()))
 
 	return withCORS(d.WebOrigin, mux)
 }

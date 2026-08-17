@@ -1,6 +1,6 @@
 "use client";
 
-import { SendHorizonalIcon } from "lucide-react";
+import { SendHorizonalIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
@@ -15,6 +15,8 @@ import {
   type ChatMessage,
   type GroupMember,
   type MessagePage,
+  type ReactionChange,
+  type SocketEvent,
   type User,
 } from "@/lib/api";
 
@@ -53,6 +55,71 @@ function reconnectDelay(failures: number): number {
   return Math.min(2000 * 2 ** (failures - 1), 30_000);
 }
 
+/** Applies one person's reaction change to the message it belongs to. */
+function applyReaction(
+  messages: ChatMessage[],
+  change: ReactionChange,
+  myUserId: string | undefined,
+): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.id !== change.message_id) return message;
+
+    const existing = message.reactions.find(
+      (reaction) => reaction.reaction_type === change.reaction_type,
+    );
+    if (
+      change.user_id === myUserId &&
+      (existing?.mine ?? false) === change.added
+    ) {
+      // Already reflected — this is the socket echoing back the change this
+      // screen made itself, which must not count a second time.
+      return message;
+    }
+    // Only the reactor knows whether it was theirs; everyone else keeps their
+    // own answer to that question untouched.
+    const mine = change.user_id === myUserId ? change.added : existing?.mine;
+    const count = (existing?.count ?? 0) + (change.added ? 1 : -1);
+
+    const reactions = existing
+      ? message.reactions
+          .map((reaction) =>
+            reaction.reaction_type === change.reaction_type
+              ? { ...reaction, count, mine: mine ?? false }
+              : reaction,
+          )
+          .filter((reaction) => reaction.count > 0)
+      : [
+          ...message.reactions,
+          {
+            reaction_type: change.reaction_type,
+            count,
+            mine: mine ?? false,
+          },
+        ];
+
+    return { ...message, reactions };
+  });
+}
+
+/** Turns a message into a tombstone, including everywhere it is quoted. */
+function applyDeletion(
+  messages: ChatMessage[],
+  messageId: string,
+): ChatMessage[] {
+  return messages.map((message) => {
+    if (message.id === messageId) {
+      return { ...message, deleted: true, content: "", reactions: [] };
+    }
+    if (message.reply_to?.id === messageId) {
+      return {
+        ...message,
+        reply_to: { ...message.reply_to, deleted: true, content: "" },
+      };
+    }
+    return message;
+  });
+}
+
 type ChatRoomProps = {
   groupId: string;
   members: GroupMember[];
@@ -66,6 +133,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sending, setSending] = useState(false);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Which message has its actions open. Tapping a bubble is how a phone gets
+  // at reply and reactions without a hover state or a long-press gesture.
+  const [openActions, setOpenActions] = useState<string | null>(null);
+  const [reactionTypes, setReactionTypes] = useState<string[]>([]);
   const bottom = useRef<HTMLDivElement>(null);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
@@ -73,6 +145,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // What is on screen, readable from a callback that must not depend on the
   // render it was created in. Only ever written by the effect below.
   const held = useRef<ChatMessage[]>([]);
+  // The reader's own id, held in a ref rather than read from state inside the
+  // socket effect: depending on it there would tear the connection down and
+  // rebuild it the moment the profile finishes loading.
+  const myId = useRef<string | undefined>(undefined);
 
   const loadLatest = useCallback(
     (mode: "initial" | "reconnect", signal?: AbortSignal) => {
@@ -132,11 +208,20 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   }, [messages]);
 
   useEffect(() => {
+    myId.current = me?.id;
+  }, [me]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     Promise.all([
       apiFetch<User>("/api/v1/auth/me", { signal: controller.signal }),
       loadLatest("initial", controller.signal),
+      // The server decides which reactions exist; asking keeps the UI from
+      // offering an emoji the API would refuse.
+      apiFetch<{ reaction_types: string[] }>("/api/v1/reaction-types", {
+        signal: controller.signal,
+      }).then((available) => setReactionTypes(available.reaction_types)),
     ])
       .then(([user]) => setMe(user))
       .catch((caught: unknown) => {
@@ -191,9 +276,21 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         failures = 0;
         if (isReconnect) backfill();
       };
-      socket.onmessage = (event) => {
-        const message = JSON.parse(event.data as string) as ChatMessage;
-        setMessages((current) => merge(current, [message], "newer"));
+      socket.onmessage = (raw) => {
+        const event = JSON.parse(raw.data as string) as SocketEvent;
+        switch (event.type) {
+          case "message":
+            setMessages((current) => merge(current, [event.message], "newer"));
+            break;
+          case "reaction":
+            setMessages((current) =>
+              applyReaction(current, event.reaction, myId.current),
+            );
+            break;
+          case "deleted":
+            setMessages((current) => applyDeletion(current, event.message_id));
+            break;
+        }
       };
       socket.onclose = () => {
         // A phone that locked its screen drops the socket; without a retry the
@@ -256,10 +353,15 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         `/api/v1/groups/${groupId}/messages`,
         {
           method: "POST",
-          body: { content, client_message_id: clientMessageID },
+          body: {
+            content,
+            client_message_id: clientMessageID,
+            reply_to_message_id: replyTo?.id,
+          },
         },
       );
       pending.current = null;
+      setReplyTo(null);
       setMessages((current) => merge(current, [sent], "newer"));
     } catch (caught) {
       setDraft(content);
@@ -290,7 +392,61 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     }
   }
 
+  async function handleReact(message: ChatMessage, reactionType: string) {
+    if (!me) return;
+
+    const mine =
+      message.reactions.find((r) => r.reaction_type === reactionType)?.mine ??
+      false;
+    const change: ReactionChange = {
+      message_id: message.id,
+      user_id: me.id,
+      reaction_type: reactionType,
+      added: !mine,
+    };
+
+    // Applied here rather than waiting for the round trip: a tap has to feel
+    // immediate. The socket echoes this same change back, which applyReaction
+    // recognises as already done.
+    setMessages((current) => applyReaction(current, change, me.id));
+    setOpenActions(null);
+
+    try {
+      await apiFetch<void>(
+        mine
+          ? `/api/v1/messages/${message.id}/reactions/${encodeURIComponent(reactionType)}`
+          : `/api/v1/messages/${message.id}/reactions`,
+        mine
+          ? { method: "DELETE" }
+          : { method: "POST", body: { reaction_type: reactionType } },
+      );
+    } catch {
+      setMessages((current) =>
+        applyReaction(current, { ...change, added: mine }, me.id),
+      );
+      setError("反應沒有送出去");
+    }
+  }
+
+  async function handleDelete(message: ChatMessage) {
+    setOpenActions(null);
+    if (!window.confirm("刪除這則訊息？回覆會保留下來。")) return;
+
+    try {
+      await apiFetch<void>(`/api/v1/messages/${message.id}`, {
+        method: "DELETE",
+      });
+      setMessages((current) => applyDeletion(current, message.id));
+    } catch {
+      setError("刪除失敗，請稍後再試");
+    }
+  }
+
   const senders = new Map(members.map((member) => [member.user_id, member]));
+
+  function nameOf(userId: string): string {
+    return senders.get(userId)?.display_name || "這位成員";
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -343,13 +499,109 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     {timeOfDay(message.created_at)}
                   </time>
                 </span>
-                <p
-                  className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
-                    mine ? "bg-primary text-primary-foreground" : "bg-muted"
-                  }`}
-                >
-                  {message.content}
-                </p>
+                {message.reply_to ? (
+                  <blockquote
+                    className={`border-primary/40 text-muted-foreground max-w-full border-l-2 px-2 text-xs ${
+                      mine ? "text-right" : ""
+                    }`}
+                  >
+                    <span className="font-medium">
+                      {nameOf(message.reply_to.user_id)}
+                    </span>
+                    <span className="ms-1 line-clamp-2">
+                      {message.reply_to.deleted
+                        ? "（訊息已刪除）"
+                        : message.reply_to.content}
+                    </span>
+                  </blockquote>
+                ) : null}
+
+                {message.deleted ? (
+                  <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
+                    （訊息已刪除）
+                  </p>
+                ) : (
+                  // The bubble is the tap target: a phone has no hover, and a
+                  // long press is a gesture people have to be taught.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className={`cursor-pointer rounded-2xl px-3 py-2 text-start text-sm whitespace-pre-wrap ${
+                      mine ? "bg-primary text-primary-foreground" : "bg-muted"
+                    }`}
+                  >
+                    {message.content}
+                  </button>
+                )}
+
+                {message.reactions.length > 0 ? (
+                  <ul
+                    className={`flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}
+                  >
+                    {message.reactions.map((reaction) => (
+                      <li key={reaction.reaction_type}>
+                        <button
+                          type="button"
+                          aria-pressed={reaction.mine}
+                          onClick={() =>
+                            handleReact(message, reaction.reaction_type)
+                          }
+                          className={`flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2 text-xs ${
+                            reaction.mine
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-transparent bg-muted"
+                          }`}
+                        >
+                          <span aria-hidden>{reaction.reaction_type}</span>
+                          <span>{reaction.count}</span>
+                          <span className="sr-only">
+                            {reaction.mine ? "取消這個反應" : "加上這個反應"}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {openActions === message.id ? (
+                  <div className="bg-card flex flex-wrap items-center gap-1 rounded-2xl border p-1">
+                    {reactionTypes.map((reactionType) => (
+                      <button
+                        key={reactionType}
+                        type="button"
+                        onClick={() => handleReact(message, reactionType)}
+                        className="hover:bg-muted size-9 cursor-pointer rounded-full text-base"
+                      >
+                        <span aria-hidden>{reactionType}</span>
+                        <span className="sr-only">{`用 ${reactionType} 回應`}</span>
+                      </button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setReplyTo(message);
+                        setOpenActions(null);
+                      }}
+                    >
+                      回覆
+                    </Button>
+                    {mine ? (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDelete(message)}
+                      >
+                        刪除
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </li>
           );
@@ -361,6 +613,26 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         <Message tone="error" className="mx-4">
           {error}
         </Message>
+      ) : null}
+
+      {replyTo ? (
+        <div className="bg-muted/50 mx-4 flex items-center gap-2 rounded-2xl px-3 py-2 text-xs">
+          <span className="text-muted-foreground shrink-0">回覆</span>
+          <span className="font-medium shrink-0">
+            {nameOf(replyTo.user_id)}
+          </span>
+          <span className="text-muted-foreground line-clamp-1 flex-1">
+            {replyTo.content}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setReplyTo(null)}
+            aria-label="取消回覆"
+          >
+            <XIcon aria-hidden />
+          </Button>
+        </div>
       ) : null}
 
       <form onSubmit={handleSend} className="flex gap-2 border-t p-4">
