@@ -80,6 +80,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       // while this request is in flight, and a message that arrives meanwhile
       // would otherwise look like proof that no gap opened during the outage.
       const beforeFetch = new Set(held.current.map((message) => message.id));
+      // The last message as of the snapshot. Live deliveries land after it and
+      // "load earlier" prepends before it, so this marks exactly where what
+      // arrived during the request begins — which "not in the snapshot" does
+      // not, since that would also catch history the reader paged back into.
+      const newestBeforeFetch = held.current.at(-1)?.id;
 
       return apiFetch<MessagePage>(`/api/v1/groups/${groupId}/messages`, {
         signal,
@@ -101,15 +106,15 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           // separated by a gap this page cannot bridge. Starting again from
           // this page keeps history walkable: its cursor leads back across the
           // gap, where merging would strand those messages out of reach.
-          setMessages((current) =>
-            // Anything that arrived since the snapshot came in live and is
-            // newer than this page, so it survives the restart.
-            merge(
-              page.messages,
-              current.filter((message) => !beforeFetch.has(message.id)),
-              "newer",
-            ),
-          );
+          setMessages((current) => {
+            // Whatever the socket delivered while this request was in flight
+            // is newer than this page, so it survives the restart.
+            const anchor = current.findIndex(
+              (message) => message.id === newestBeforeFetch,
+            );
+            const arrivedSince = anchor < 0 ? [] : current.slice(anchor + 1);
+            return merge(page.messages, arrivedSince, "newer");
+          });
           setBefore(page.before);
           return;
         }
@@ -196,7 +201,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         if (stopped) return;
 
         failures += 1;
-        if (failures > maxReconnectAttempts) {
+        if (failures >= maxReconnectAttempts) {
           // The browser cannot see why a handshake failed, so a refusal that
           // will never succeed — the server no longer counts this user as a
           // member — looks exactly like a flaky network. Giving up after
