@@ -129,9 +129,13 @@ func getAvatarHandler(d Deps) http.HandlerFunc {
 		defer reader.Close()
 
 		w.Header().Set("Content-Type", contentType)
-		// A media ID never points at different bytes, so this is safe to cache
-		// hard; a new picture is simply a new URL.
-		w.Header().Set("Cache-Control", "private, max-age=86400")
+		// A media ID never points at different bytes, so the content itself
+		// could be cached forever. What expires is permission: the browser
+		// serves its own cached copy without re-asking, so a long lifetime
+		// would let a device keep rendering a picture for hours after leaving
+		// the group. A minute keeps a member list from refetching on every
+		// render while bounding that window to something defensible.
+		w.Header().Set("Cache-Control", "private, max-age=60")
 		if _, err := io.Copy(w, reader); err != nil {
 			d.Logger.Error("streaming avatar failed", "error", err)
 		}
