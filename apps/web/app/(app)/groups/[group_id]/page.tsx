@@ -131,7 +131,9 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
       {/* The conversation is the page; membership and invites are settings
           you visit occasionally, so they take the screen only when asked for. */}
       {!showDetails ? (
-        <ChatRoom groupId={groupId} members={members} />
+        // key: switching groups must start a fresh conversation, not reuse
+        // this one's refs and in-flight requests under a new id.
+        <ChatRoom key={groupId} groupId={groupId} members={members} />
       ) : (
         <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">
           <section className="flex flex-col gap-2">

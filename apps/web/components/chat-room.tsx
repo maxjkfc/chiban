@@ -153,6 +153,30 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     let failures = 0;
+    let backfilling = false;
+    let backfillAgain = false;
+
+    // One backfill at a time. Two overlapping ones would work from the same
+    // snapshot, and the first to finish would replace the list out from under
+    // the second — taking the anchor its suffix depends on with it. A drop
+    // that happens mid-backfill is not lost: it queues one more pass, which
+    // takes its own fresh snapshot.
+    function backfill() {
+      if (backfilling) {
+        backfillAgain = true;
+        return;
+      }
+      backfilling = true;
+      void loadLatest("reconnect")
+        .catch(() => {})
+        .finally(() => {
+          backfilling = false;
+          if (backfillAgain && !stopped) {
+            backfillAgain = false;
+            backfill();
+          }
+        });
+    }
 
     function connect(isReconnect: boolean) {
       if (stopped) return;
@@ -160,7 +184,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
       socket.onopen = () => {
         failures = 0;
-        if (isReconnect) void loadLatest("reconnect").catch(() => {});
+        if (isReconnect) backfill();
       };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data as string) as ChatMessage;
