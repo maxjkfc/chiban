@@ -115,3 +115,11 @@ export function safeNextPath(next: string | null | undefined): string | null {
     return null;
   }
 }
+
+export type Meal = {
+  id: string;
+  meal_type?: string;
+  eaten_at: string;
+  description?: string;
+  photo_ids: string[];
+};

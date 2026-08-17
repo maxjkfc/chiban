@@ -15,8 +15,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -240,6 +244,80 @@ func (a *App) JoinGroup(code string) Group {
 	var g Group
 	a.DecodeJSON(resp, &g)
 	return g
+}
+
+// Meal is the meal shape the API returns.
+type Meal struct {
+	ID          string   `json:"id"`
+	MealType    string   `json:"meal_type"`
+	EatenAt     string   `json:"eaten_at"`
+	Description string   `json:"description"`
+	PhotoIDs    []string `json:"photo_ids"`
+}
+
+// JPEG returns a small valid JPEG, for tests that need a real photo rather
+// than bytes that merely claim to be one.
+func JPEG(t *testing.T, width, height int) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, width, height)), nil); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// UploadMeal posts a meal with the given photos as multipart form data, the
+// way the browser does.
+func (a *App) UploadMeal(fields map[string]string, photos ...[]byte) *http.Response {
+	a.t.Helper()
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	for name, value := range fields {
+		if err := form.WriteField(name, value); err != nil {
+			a.t.Fatalf("write field %s: %v", name, err)
+		}
+	}
+	for i, photo := range photos {
+		part, err := form.CreateFormFile("photos", fmt.Sprintf("photo-%d.jpg", i))
+		if err != nil {
+			a.t.Fatalf("create photo part: %v", err)
+		}
+		if _, err := part.Write(photo); err != nil {
+			a.t.Fatalf("write photo: %v", err)
+		}
+	}
+	if err := form.Close(); err != nil {
+		a.t.Fatalf("close form: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(a.t.Context(), http.MethodPost, a.BaseURL+"/api/v1/meals", &body)
+	if err != nil {
+		a.t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		a.t.Fatalf("upload meal: %v", err)
+	}
+	a.t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// CreateMeal uploads a meal and fails the test unless it was created.
+func (a *App) CreateMeal(photos ...[]byte) Meal {
+	a.t.Helper()
+
+	resp := a.UploadMeal(nil, photos...)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("create meal: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var m Meal
+	a.DecodeJSON(resp, &m)
+	return m
 }
 
 // SessionCookie returns the current session token, for tests that need to

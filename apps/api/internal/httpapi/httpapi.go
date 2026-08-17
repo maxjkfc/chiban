@@ -16,6 +16,7 @@ import (
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/group"
+	"github.com/maxjkfc/chiban/apps/api/internal/meal"
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
@@ -27,6 +28,7 @@ type Deps struct {
 	Auth    *auth.Service
 	Profile *profile.Service
 	Group   *group.Service
+	Meal    *meal.Service
 	// WebOrigin is the one browser origin allowed to send credentialed
 	// requests. Empty disables CORS entirely, which is what tests want.
 	WebOrigin string
@@ -44,6 +46,9 @@ func NewRouter(d Deps) http.Handler {
 	}
 	if d.Group == nil {
 		d.Group = group.NewService(d.DB)
+	}
+	if d.Meal == nil {
+		d.Meal = meal.NewService(d.DB, d.Storage)
 	}
 
 	mux := http.NewServeMux()
@@ -66,6 +71,10 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(createInviteHandler(d)))
 	mux.Handle("GET /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(listInvitesHandler(d)))
 	mux.Handle("DELETE /api/v1/groups/{group_id}/invites/{invite_id}", d.Auth.RequireUser(revokeInviteHandler(d)))
+
+	mux.Handle("POST /api/v1/meals", d.Auth.RequireUser(createMealHandler(d)))
+	mux.Handle("GET /api/v1/meals/{meal_id}", d.Auth.RequireUser(getMealHandler(d)))
+	mux.Handle("GET /api/v1/meal-images/{image_id}", d.Auth.RequireUser(getMealImageHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }

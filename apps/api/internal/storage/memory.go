@@ -17,6 +17,12 @@ type Memory struct {
 	// FailUpload, when set, makes Upload return this error. Tests use it to
 	// exercise the storage/DB partial-failure cleanup path.
 	FailUpload error
+	// FailUploadAfter, when positive, lets that many uploads succeed before
+	// FailUpload starts applying, so a test can fail the third photo of four
+	// and check the first two were cleaned up.
+	FailUploadAfter int
+
+	uploads int
 }
 
 type memoryObject struct {
@@ -29,15 +35,19 @@ func NewMemory() *Memory {
 }
 
 func (m *Memory) Upload(_ context.Context, bucket, name, contentType string, r io.Reader) (Object, error) {
-	if m.FailUpload != nil {
-		return Object{}, m.FailUpload
-	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return Object{}, err
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.FailUpload != nil && m.uploads >= m.FailUploadAfter {
+		return Object{}, m.FailUpload
+	}
+	m.uploads++
+
 	m.objects[key(bucket, name)] = memoryObject{data: data, contentType: contentType}
 	return Object{Bucket: bucket, Name: name, ContentType: contentType, Size: int64(len(data))}, nil
 }
