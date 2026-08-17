@@ -15,26 +15,33 @@ import (
 )
 
 type mealResponse struct {
-	ID          string `json:"id"`
-	MealType    string `json:"meal_type,omitempty"`
-	EatenAt     string `json:"eaten_at"`
-	Description string `json:"description,omitempty"`
+	ID       string `json:"id"`
+	MealType string `json:"meal_type,omitempty"`
+	// EatenAt is the instant; EatenAtLocal is the same moment as wall-clock
+	// time in the owner's timezone. The frontend renders and edits the local
+	// form and never does timezone arithmetic of its own — the browser's zone
+	// is not necessarily the profile's, and guessing wrong would silently
+	// rewrite the instant on save.
+	EatenAt      string `json:"eaten_at"`
+	EatenAtLocal string `json:"eaten_at_local"`
+	Description  string `json:"description,omitempty"`
 	// PhotoIDs are application-level IDs. Buckets and object names never leave
 	// the backend, so the frontend cannot depend on the storage layout.
 	PhotoIDs []string `json:"photo_ids"`
 }
 
-func newMealResponse(m meal.Meal) mealResponse {
+func newMealResponse(m meal.Meal, loc *time.Location) mealResponse {
 	ids := make([]string, 0, len(m.Photos))
 	for _, p := range m.Photos {
 		ids = append(ids, p.ID.String())
 	}
 	return mealResponse{
-		ID:          m.ID.String(),
-		MealType:    m.MealType,
-		EatenAt:     m.EatenAt.UTC().Format(timeFormat),
-		Description: m.Description,
-		PhotoIDs:    ids,
+		ID:           m.ID.String(),
+		MealType:     m.MealType,
+		EatenAt:      m.EatenAt.UTC().Format(timeFormat),
+		EatenAtLocal: m.EatenAt.In(loc).Format(meal.LocalTimeFormat),
+		Description:  m.Description,
+		PhotoIDs:     ids,
 	}
 }
 
@@ -67,7 +74,13 @@ func createMealHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		m, err := d.Meal.Create(r.Context(), auth.UserFromContext(r.Context()).ID, meal.Input{
+		userID := auth.UserFromContext(r.Context()).ID
+		loc, ok := userLocation(w, r, d, userID)
+		if !ok {
+			return
+		}
+
+		m, err := d.Meal.Create(r.Context(), userID, meal.Input{
 			MealType:    r.FormValue("meal_type"),
 			EatenAt:     eatenAt,
 			Description: r.FormValue("description"),
@@ -76,7 +89,7 @@ func createMealHandler(d Deps) http.HandlerFunc {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, newMealResponse(m))
+		writeJSON(w, http.StatusCreated, newMealResponse(m, loc))
 	}
 }
 
@@ -87,21 +100,30 @@ func getMealHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		m, err := d.Meal.Get(r.Context(), auth.UserFromContext(r.Context()).ID, mealID)
+		userID := auth.UserFromContext(r.Context()).ID
+		loc, ok := userLocation(w, r, d, userID)
+		if !ok {
+			return
+		}
+
+		m, err := d.Meal.Get(r.Context(), userID, mealID)
 		if err != nil {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, newMealResponse(m))
+		writeJSON(w, http.StatusOK, newMealResponse(m, loc))
 	}
 }
 
 type patchMealRequest struct {
 	// Pointers so an omitted field stays untouched: editing a note must not
 	// silently reset the time.
-	MealType    *string `json:"meal_type"`
-	EatenAt     *string `json:"eaten_at"`
-	Description *string `json:"description"`
+	MealType *string `json:"meal_type"`
+	// Wall-clock time in the owner's timezone, e.g. "2026-03-15T12:30". The
+	// server resolves it against the profile zone; the browser's own zone
+	// never enters into it.
+	EatenAtLocal *string `json:"eaten_at_local"`
+	Description  *string `json:"description"`
 }
 
 type mealDayResponse struct {
@@ -138,7 +160,7 @@ func listMealsHandler(d Deps) http.HandlerFunc {
 
 		out := make([]mealResponse, 0, len(meals))
 		for _, m := range meals {
-			out = append(out, newMealResponse(m))
+			out = append(out, newMealResponse(m, loc))
 		}
 		writeJSON(w, http.StatusOK, mealDayResponse{Date: date.String(), Meals: out})
 	}
@@ -156,22 +178,29 @@ func patchMealHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
+		userID := auth.UserFromContext(r.Context()).ID
+		loc, ok := userLocation(w, r, d, userID)
+		if !ok {
+			return
+		}
+
 		in := meal.UpdateInput{MealType: req.MealType, Description: req.Description}
-		if req.EatenAt != nil {
-			eatenAt, err := time.Parse(time.RFC3339, *req.EatenAt)
+		if req.EatenAtLocal != nil {
+			eatenAt, err := time.ParseInLocation(meal.LocalTimeFormat, *req.EatenAtLocal, loc)
 			if err != nil {
-				writeError(w, http.StatusBadRequest, "eaten_at must be an RFC 3339 timestamp", "eaten_at")
+				writeError(w, http.StatusBadRequest,
+					"eaten_at_local must look like 2026-03-15T12:30", "eaten_at_local")
 				return
 			}
 			in.EatenAt = &eatenAt
 		}
 
-		m, err := d.Meal.Update(r.Context(), auth.UserFromContext(r.Context()).ID, mealID, in)
+		m, err := d.Meal.Update(r.Context(), userID, mealID, in)
 		if err != nil {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, newMealResponse(m))
+		writeJSON(w, http.StatusOK, newMealResponse(m, loc))
 	}
 }
 

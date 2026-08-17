@@ -1,7 +1,7 @@
 "use client";
 
 import { CameraIcon, ImageIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,12 +55,19 @@ export default function RecordPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Preview URLs stay alive until revoked, so release them when the page goes.
+  // Release preview URLs when the page goes. Keeping them in a ref rather than
+  // depending on `photos` matters: an effect keyed on the state would run its
+  // cleanup on every add and revoke URLs the next render still shows. Removal
+  // and publish revoke their own URLs already.
+  const photosRef = useRef<Picked[]>([]);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
   useEffect(() => {
     return () => {
-      for (const photo of photos) URL.revokeObjectURL(photo.previewUrl);
+      for (const photo of photosRef.current) URL.revokeObjectURL(photo.previewUrl);
     };
-  }, [photos]);
+  }, []);
 
   const remaining = MAX_PHOTOS - photos.length;
 

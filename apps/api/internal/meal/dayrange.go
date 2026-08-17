@@ -5,8 +5,13 @@ import (
 	"time"
 )
 
-// DateFormat is how a calendar date crosses the API boundary.
-const DateFormat = "2006-01-02"
+const (
+	// DateFormat is how a calendar date crosses the API boundary.
+	DateFormat = "2006-01-02"
+	// LocalTimeFormat is wall-clock time in a user's own zone, the shape an
+	// HTML datetime-local input uses.
+	LocalTimeFormat = "2006-01-02T15:04"
+)
 
 // Date is a calendar date with no time and no zone attached — the thing a user
 // means by "the 5th", independent of where they were standing.

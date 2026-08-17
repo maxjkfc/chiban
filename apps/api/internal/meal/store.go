@@ -62,15 +62,27 @@ func (s *store) createPhoto(ctx context.Context, mealID uuid.UUID, object storag
 	return p, nil
 }
 
-// findForReader is the authorization check for reading a meal. Slice 9 widens
-// the WHERE clause to include shared groups; every reader comes through here so
-// there is one place to widen.
+// readableMealsCTE is the one definition of "which meals may this reader see".
+//
+// Both the meal query and the photo query select through it, so widening it
+// for meal sharing in slice 9 is a single edit. Two hand-written copies of the
+// same predicate would drift, and the way they would drift is a shared-group
+// member reading a meal but 404ing on its photos, or the reverse.
+const readableMealsCTE = `
+	WITH readable AS (
+		SELECT id, user_id, meal_type, eaten_at, description
+		FROM meal_records
+		WHERE deleted_at IS NULL AND user_id = $2
+	)
+`
+
+// findForReader is the authorization check for reading a meal.
 func (s *store) findForReader(ctx context.Context, mealID, readerID uuid.UUID) (Meal, error) {
 	var m Meal
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, readableMealsCTE+`
 		SELECT id, user_id, coalesce(meal_type, ''), eaten_at, coalesce(description, '')
-		FROM meal_records
-		WHERE id = $1 AND deleted_at IS NULL AND user_id = $2
+		FROM readable
+		WHERE id = $1
 	`, mealID, readerID).Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Meal{}, ErrNotFound
@@ -129,14 +141,50 @@ func (s *store) listBetween(ctx context.Context, userID uuid.UUID, start, end ti
 		return nil, err
 	}
 
+	ids := make([]uuid.UUID, 0, len(meals))
+	for _, m := range meals {
+		ids = append(ids, m.ID)
+	}
+	byMeal, err := s.photosFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	for i := range meals {
-		photos, err := s.listPhotos(ctx, meals[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		meals[i].Photos = photos
+		meals[i].Photos = byMeal[meals[i].ID]
 	}
 	return meals, nil
+}
+
+// photosFor loads every meal's photos in one query. A query per meal would be
+// harmless for one person's day but not for slice 9's group meal cards.
+func (s *store) photosFor(ctx context.Context, mealIDs []uuid.UUID) (map[uuid.UUID][]Photo, error) {
+	byMeal := map[uuid.UUID][]Photo{}
+	if len(mealIDs) == 0 {
+		return byMeal, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT meal_record_id, id, sort_order
+		FROM meal_photos
+		WHERE meal_record_id = ANY($1)
+		ORDER BY meal_record_id, sort_order
+	`, mealIDs)
+	if err != nil {
+		return nil, fmt.Errorf("meal: list photos: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			mealID uuid.UUID
+			p      Photo
+		)
+		if err := rows.Scan(&mealID, &p.ID, &p.SortOrder); err != nil {
+			return nil, fmt.Errorf("meal: scan photo: %w", err)
+		}
+		byMeal[mealID] = append(byMeal[mealID], p)
+	}
+	return byMeal, rows.Err()
 }
 
 func (s *store) update(ctx context.Context, mealID, ownerID uuid.UUID, in Input) (Meal, error) {
@@ -199,11 +247,11 @@ func (s *store) listPhotos(ctx context.Context, mealID uuid.UUID) ([]Photo, erro
 // location, applying the same authorization as reading the meal itself.
 func (s *store) findPhotoForReader(ctx context.Context, photoID, readerID uuid.UUID) (storedPhoto, error) {
 	var p storedPhoto
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, readableMealsCTE+`
 		SELECT p.id, p.bucket, p.object_name, p.content_type
 		FROM meal_photos p
-		JOIN meal_records m ON m.id = p.meal_record_id
-		WHERE p.id = $1 AND m.deleted_at IS NULL AND m.user_id = $2
+		JOIN readable m ON m.id = p.meal_record_id
+		WHERE p.id = $1
 	`, photoID, readerID).Scan(&p.ID, &p.Bucket, &p.ObjectName, &p.ContentType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedPhoto{}, ErrPhotoNotFound

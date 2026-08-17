@@ -165,6 +165,73 @@ func TestPatchLeavesOmittedMealFieldsAlone(t *testing.T) {
 	}
 }
 
+// The edit form sends wall-clock time. Interpreting it in the profile zone is
+// the server's job: a browser in another zone must not shift the instant.
+func TestEditingTheTimeUsesTheProfileZoneNotTheClients(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.RegisterUser("mei@example.com")
+	app.SaveProfile("小美", "Asia/Taipei")
+	created := app.CreateMealAt(time.Date(2026, 3, 15, 4, 0, 0, 0, time.UTC), testsupport.JPEG(t, 100, 100))
+
+	resp := app.Request(http.MethodPatch, "/api/v1/meals/"+created.ID, map[string]string{
+		"eaten_at_local": "2026-03-15T12:30",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var updated testsupport.Meal
+	app.DecodeJSON(resp, &updated)
+
+	// 12:30 in Taipei is 04:30 UTC, whatever zone the caller happens to be in.
+	want := time.Date(2026, 3, 15, 4, 30, 0, 0, time.UTC)
+	if got, _ := time.Parse(time.RFC3339, updated.EatenAt); !got.Equal(want) {
+		t.Fatalf("eaten_at = %s, want %s", got, want)
+	}
+	if updated.EatenAtLocal != "2026-03-15T12:30" {
+		t.Fatalf("eaten_at_local = %q, want it echoed back unchanged", updated.EatenAtLocal)
+	}
+}
+
+// The same instant reads back as a different wall-clock time once the profile
+// moves, which is what makes the edit form show the right thing.
+func TestLocalTimeFollowsTheProfileZone(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.RegisterUser("mei@example.com")
+	app.SaveProfile("小美", "Asia/Taipei")
+	created := app.CreateMealAt(time.Date(2026, 3, 15, 4, 0, 0, 0, time.UTC), testsupport.JPEG(t, 100, 100))
+
+	resp := app.Request(http.MethodGet, "/api/v1/meals/"+created.ID, nil)
+	var inTaipei testsupport.Meal
+	app.DecodeJSON(resp, &inTaipei)
+	if inTaipei.EatenAtLocal != "2026-03-15T12:00" {
+		t.Fatalf("in Taipei local = %q, want 2026-03-15T12:00", inTaipei.EatenAtLocal)
+	}
+
+	app.SaveProfile("小美", "America/New_York")
+
+	resp = app.Request(http.MethodGet, "/api/v1/meals/"+created.ID, nil)
+	var inNewYork testsupport.Meal
+	app.DecodeJSON(resp, &inNewYork)
+	if inNewYork.EatenAtLocal != "2026-03-15T00:00" {
+		t.Fatalf("in New York local = %q, want 2026-03-15T00:00", inNewYork.EatenAtLocal)
+	}
+}
+
+func TestEditingRejectsAMalformedLocalTime(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+	created := app.CreateMeal(testsupport.JPEG(t, 100, 100))
+
+	resp := app.Request(http.MethodPatch, "/api/v1/meals/"+created.ID, map[string]string{
+		"eaten_at_local": "2026-03-15 12:30",
+	})
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 func TestOnlyTheOwnerCanEditOrDeleteAMeal(t *testing.T) {
 	app := testsupport.NewApp(t)
 	app.Onboard("mei@example.com", "小美")

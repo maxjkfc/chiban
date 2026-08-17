@@ -249,11 +249,12 @@ func (a *App) JoinGroup(code string) Group {
 
 // Meal is the meal shape the API returns.
 type Meal struct {
-	ID          string   `json:"id"`
-	MealType    string   `json:"meal_type"`
-	EatenAt     string   `json:"eaten_at"`
-	Description string   `json:"description"`
-	PhotoIDs    []string `json:"photo_ids"`
+	ID           string   `json:"id"`
+	MealType     string   `json:"meal_type"`
+	EatenAt      string   `json:"eaten_at"`
+	EatenAtLocal string   `json:"eaten_at_local"`
+	Description  string   `json:"description"`
+	PhotoIDs     []string `json:"photo_ids"`
 }
 
 // JPEG returns a small valid JPEG, for tests that need a real photo rather

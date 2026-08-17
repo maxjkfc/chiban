@@ -116,7 +116,7 @@ func TestExifAndGPSMetadataAreRemoved(t *testing.T) {
 func TestAnimatedGIFsKeepEveryFrame(t *testing.T) {
 	source := encodeAnimatedGIF(t, 3)
 
-	out, err := media.Sanitize(source)
+	out, err := media.SanitizeAllowingGIF(source)
 	if err != nil {
 		t.Fatalf("sanitize: %v", err)
 	}
@@ -168,12 +168,17 @@ func encodeJPEG(t *testing.T, img image.Image) []byte {
 
 func encodeAnimatedGIF(t *testing.T, frames int) []byte {
 	t.Helper()
+	return encodeAnimatedGIFOfSize(t, frames, 20)
+}
+
+func encodeAnimatedGIFOfSize(t *testing.T, frames, size int) []byte {
+	t.Helper()
 
 	palette := color.Palette{color.Black, color.White}
 	animation := &gif.GIF{}
 	for i := 0; i < frames; i++ {
-		frame := image.NewPaletted(image.Rect(0, 0, 20, 20), palette)
-		frame.SetColorIndex(i, i, 1)
+		frame := image.NewPaletted(image.Rect(0, 0, size, size), palette)
+		frame.SetColorIndex(i%size, i%size, 1)
 		animation.Image = append(animation.Image, frame)
 		animation.Delay = append(animation.Delay, 10)
 	}
@@ -232,4 +237,67 @@ func asInvalid(err error, target *media.InvalidInputError) bool {
 		*target = invalid
 	}
 	return ok
+}
+
+// A meal photo is a photograph. Accepting an animation there would mean the
+// recording flow silently runs the GIF decoder, which nothing asks for.
+func TestSanitizeRejectsGIFButSanitizeAllowingGIFAcceptsIt(t *testing.T) {
+	source := encodeAnimatedGIF(t, 2)
+
+	if _, err := media.Sanitize(source); err == nil {
+		t.Fatal("Sanitize accepted a GIF")
+	}
+	if _, err := media.SanitizeAllowingGIF(source); err != nil {
+		t.Fatalf("SanitizeAllowingGIF rejected a GIF: %v", err)
+	}
+}
+
+// Importing an image library registers its formats globally. TIFF and BMP
+// arrive that way, and accepting them would run decoders this product never
+// chose to depend on.
+func TestRejectsFormatsThatWereOnlyRegisteredTransitively(t *testing.T) {
+	// A minimal little-endian TIFF: header, one IFD, one 1x1 strip.
+	tiff := []byte{
+		'I', 'I', 42, 0, 8, 0, 0, 0,
+		1, 0,
+		0x00, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+		0, 0, 0, 0,
+	}
+
+	if _, err := media.Sanitize(tiff); err == nil {
+		t.Fatal("accepted a TIFF; only JPEG and PNG are supported")
+	}
+}
+
+// Dimensions bound the shape, not the memory: this is the check that stops a
+// well-compressed image from decoding into hundreds of megabytes.
+func TestRejectsImagesOverTheDecodedPixelBudget(t *testing.T) {
+	// 9000x9000 is within MaxSourceDimension but far past the pixel budget.
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, 9000, 9000))); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+
+	_, err := media.Sanitize(buf.Bytes())
+
+	var invalid media.InvalidInputError
+	if !asInvalid(err, &invalid) {
+		t.Fatalf("err = %v, want an InvalidInputError about megapixels", err)
+	}
+}
+
+// The bomb john reproduced: thousands of tiny frames compress to a couple of
+// megabytes and decode to hundreds.
+func TestRejectsGIFsWithTooManyFramesForTheirSize(t *testing.T) {
+	// 20000 frames of 50x50 decode to 50 million pixels, well past the budget,
+	// from a file small enough that the size limit never fires.
+	source := encodeAnimatedGIFOfSize(t, 20000, 50)
+
+	if len(source) > media.MaxUploadBytes {
+		t.Fatalf("fixture is %d bytes, which the size limit would catch first", len(source))
+	}
+
+	if _, err := media.SanitizeAllowingGIF(source); err == nil {
+		t.Fatal("accepted a GIF whose frames decode far past the pixel budget")
+	}
 }

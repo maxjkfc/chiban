@@ -9,6 +9,7 @@ import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   apiUrl,
+  localTimeOfDay,
   mealTypeLabel,
   shiftDate,
   type MealDay,
@@ -124,14 +125,13 @@ export default function TodayPage() {
                     <span className="font-semibold">
                       {mealTypeLabel(meal.meal_type) ?? "這一餐"}
                     </span>
+                    {/* The server already rendered this in the profile zone;
+                        formatting it here would use the browser's instead. */}
                     <time
                       dateTime={meal.eaten_at}
                       className="text-muted-foreground text-xs"
                     >
-                      {new Date(meal.eaten_at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {localTimeOfDay(meal.eaten_at_local)}
                     </time>
                   </div>
                   {meal.description ? (

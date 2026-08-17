@@ -18,13 +18,6 @@ const mealTypes = [
   { value: "other", label: "其他" },
 ] as const;
 
-/** Turns an RFC 3339 instant into the value a datetime-local input wants. */
-function toLocalInputValue(instant: string): string {
-  const date = new Date(instant);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-
 export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
   const { meal_id: mealId } = use(params);
   const router = useRouter();
@@ -46,7 +39,9 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
         setMeal(loaded);
         setMealType(loaded.meal_type ?? "");
         setDescription(loaded.description ?? "");
-        setEatenAt(toLocalInputValue(loaded.eaten_at));
+        // Already wall-clock in the profile zone, which is the shape the
+        // datetime-local input wants — no conversion here.
+        setEatenAt(loaded.eaten_at_local);
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
@@ -72,11 +67,13 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
         body: {
           meal_type: mealType,
           description,
-          // The input gives local wall-clock time; the API stores the instant.
-          eaten_at: new Date(eatenAt).toISOString(),
+          // Wall-clock time goes back as-is; the server resolves it against
+          // the profile timezone.
+          eaten_at_local: eatenAt,
         },
       });
       setMeal(saved);
+      setEatenAt(saved.eaten_at_local);
       setStatus("已儲存");
     } catch (caught) {
       setError(caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試");

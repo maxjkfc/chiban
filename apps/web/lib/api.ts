@@ -119,10 +119,23 @@ export function safeNextPath(next: string | null | undefined): string | null {
 export type Meal = {
   id: string;
   meal_type?: string;
+  /** The instant, for machines. */
   eaten_at: string;
+  /**
+   * The same moment as wall-clock time in the owner's profile timezone, e.g.
+   * "2026-03-15T12:30". Display and edit this, never `eaten_at`: the browser's
+   * timezone is not necessarily the profile's, and converting here would show
+   * the wrong time and rewrite the instant on save.
+   */
+  eaten_at_local: string;
   description?: string;
   photo_ids: string[];
 };
+
+/** "2026-03-15T12:30" to "12:30", for the compact list view. */
+export function localTimeOfDay(eatenAtLocal: string): string {
+  return eatenAtLocal.slice(11, 16);
+}
 
 export type MealDay = {
   date: string;
