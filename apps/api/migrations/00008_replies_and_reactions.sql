@@ -2,8 +2,12 @@
 -- A reply is an ordinary message pointing at another one. V0.1 has no separate
 -- comment domain: a comment on a meal and a reply in chat are the same thing,
 -- so the thread structure lives on the message itself.
+-- SET NULL, never CASCADE: a reply is its author's own contribution and must
+-- survive whatever happens to what it answered. Deletion in the API is soft, so
+-- this only fires if a row is ever removed for real — a deleted account, say —
+-- and even then the reply stays, minus its quote.
 ALTER TABLE chat_messages
-    ADD COLUMN reply_to_message_id uuid REFERENCES chat_messages (id) ON DELETE CASCADE;
+    ADD COLUMN reply_to_message_id uuid REFERENCES chat_messages (id) ON DELETE SET NULL;
 
 CREATE TABLE message_reactions (
     message_id uuid NOT NULL REFERENCES chat_messages (id) ON DELETE CASCADE,

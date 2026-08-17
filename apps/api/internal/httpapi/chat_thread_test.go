@@ -312,3 +312,44 @@ func TestADeletionReachesTheOtherMemberLive(t *testing.T) {
 		t.Fatalf("deleted %s, want %s", event.MessageID, message.ID)
 	}
 }
+
+// Reactions are answers to content. When the content goes, they go with it —
+// unlike replies, which are their author's own contribution and stay.
+func TestDeletingAMessageTakesItsReactionsWithIt(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	message := app.SendMessage(group.ID, "今天吃什麼")
+	app.React(message.ID, heart)
+
+	if resp := app.DeleteMessage(message.ID); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	tombstone := app.History(group.ID, "").Messages[0]
+	if !tombstone.Deleted {
+		t.Fatal("the message was not tombstoned")
+	}
+	if len(tombstone.Reactions) != 0 {
+		t.Fatalf("the tombstone still carries %+v", tombstone.Reactions)
+	}
+}
+
+// There is nothing left to react to, and a reaction that outlived its message
+// would reappear under the tombstone on every reload.
+func TestReactingToADeletedMessageIsRefused(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	message := app.SendMessage(group.ID, "今天吃什麼")
+	app.DeleteMessage(message.ID)
+
+	if resp := app.PostReaction(message.ID, heart); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if len(app.History(group.ID, "").Messages[0].Reactions) != 0 {
+		t.Fatal("a reaction landed on a deleted message")
+	}
+}

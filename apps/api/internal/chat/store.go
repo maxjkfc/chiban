@@ -165,25 +165,42 @@ func (s *store) listBefore(ctx context.Context, groupID uuid.UUID, cursor Cursor
 }
 
 // softDelete tombstones a message, reporting whether it was still live.
+//
+// The reactions go with it. They are answers to content that no longer exists,
+// unlike replies, which are their own contribution to the conversation and so
+// are deliberately left standing.
 func (s *store) softDelete(ctx context.Context, id uuid.UUID) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE chat_messages
-		SET deleted_at = now(), updated_at = now(), content = NULL
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
+	var tombstoned int
+	err := s.db.QueryRowContext(ctx, `
+		WITH removed AS (
+			UPDATE chat_messages
+			SET deleted_at = now(), updated_at = now(), content = NULL
+			WHERE id = $1 AND deleted_at IS NULL
+			RETURNING id
+		), cleared AS (
+			DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM removed)
+		)
+		SELECT count(*) FROM removed
+	`, id).Scan(&tombstoned)
 	if err != nil {
 		return false, fmt.Errorf("chat: delete message: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	return affected > 0, err
+	return tombstoned > 0, nil
 }
 
 // addReaction records one, reporting whether it was new. A repeated tap is not
 // an error and must not count twice, which the primary key guarantees.
 func (s *store) addReaction(ctx context.Context, messageID, userID uuid.UUID, reactionType string) (bool, error) {
+	// The liveness test is part of the statement, not a check before it: a
+	// message can be deleted between reading it and reacting to it, and a
+	// reaction that outlives its message is exactly what the tombstone is
+	// meant to prevent.
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO message_reactions (message_id, user_id, reaction_type)
-		VALUES ($1, $2, $3)
+		SELECT $1, $2, $3
+		WHERE EXISTS (
+			SELECT 1 FROM chat_messages WHERE id = $1 AND deleted_at IS NULL
+		)
 		ON CONFLICT DO NOTHING
 	`, messageID, userID, reactionType)
 	if err != nil {

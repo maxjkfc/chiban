@@ -55,6 +55,47 @@ function reconnectDelay(failures: number): number {
   return Math.min(2000 * 2 ** (failures - 1), 30_000);
 }
 
+/**
+ * Brings messages already on screen up to date with what the server just said.
+ *
+ * merge only ever adds, which is right for ordering but leaves a message that
+ * changed while the socket was down — deleted, or reacted to — showing what it
+ * looked like before. A history page is the server's current answer for every
+ * message in it, so it is also the only chance to correct one.
+ */
+function reconcile(
+  current: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const truth = new Map(incoming.map((message) => [message.id, message]));
+
+  let changed = false;
+  const next = current.map((message) => {
+    const server = truth.get(message.id);
+    if (!server || !differs(message, server)) return message;
+    changed = true;
+    return server;
+  });
+  return changed ? next : current;
+}
+
+function differs(mine: ChatMessage, server: ChatMessage): boolean {
+  return (
+    mine.deleted !== server.deleted ||
+    mine.content !== server.content ||
+    mine.reply_to?.deleted !== server.reply_to?.deleted ||
+    mine.reactions.length !== server.reactions.length ||
+    mine.reactions.some((reaction, index) => {
+      const theirs = server.reactions[index];
+      return (
+        reaction.reaction_type !== theirs.reaction_type ||
+        reaction.count !== theirs.count ||
+        reaction.mine !== theirs.mine
+      );
+    })
+  );
+}
+
 /** Applies one person's reaction change to the message it belongs to. */
 function applyReaction(
   messages: ChatMessage[],
@@ -67,6 +108,11 @@ function applyReaction(
     const existing = message.reactions.find(
       (reaction) => reaction.reaction_type === change.reaction_type,
     );
+    if (!existing && !change.added) {
+      // Taking back a reaction this screen never saw arrive. There is nothing
+      // to decrement, and inventing an entry would render a count of -1.
+      return message;
+    }
     if (
       change.user_id === myUserId &&
       (existing?.mine ?? false) === change.added
@@ -168,7 +214,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         if (mode === "initial") {
           // Anything already held arrived on the socket while this request was
           // in flight, so it is newer than every message in this page.
-          setMessages((current) => merge(current, page.messages, "older"));
+          setMessages((current) =>
+            merge(reconcile(current, page.messages), page.messages, "older"),
+          );
           setBefore(page.before);
           return;
         }
@@ -194,7 +242,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           setBefore(page.before);
           return;
         }
-        setMessages((current) => merge(current, page.messages, "newer"));
+        setMessages((current) =>
+          merge(reconcile(current, page.messages), page.messages, "newer"),
+        );
         // The button walks back from where the first page ended; a reconnect
         // must not rewind it past what is already on screen.
         setBefore((current) => current ?? page.before);
@@ -383,7 +433,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       const page = await apiFetch<MessagePage>(
         `/api/v1/groups/${groupId}/messages?before=${encodeURIComponent(before)}`,
       );
-      setMessages((current) => merge(current, page.messages, "older"));
+      setMessages((current) =>
+        merge(reconcile(current, page.messages), page.messages, "older"),
+      );
       setBefore(page.before);
     } catch {
       setError("讀取更早的訊息失敗");
