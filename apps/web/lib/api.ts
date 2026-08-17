@@ -4,7 +4,8 @@
  * The frontend addresses media and every other resource by application-level
  * ID through this base URL. It must never build fake-GCS URLs or object paths.
  */
-const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:18080";
+const baseUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:18080";
 
 export function apiUrl(path: string): string {
   return `${baseUrl}${path}`;
@@ -43,7 +44,8 @@ export async function apiFetch<T>(
     method,
     signal,
     credentials: "include",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers:
+      body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
@@ -169,4 +171,37 @@ export function shiftDate(date: string, days: number): string {
   const shifted = new Date(`${date}T00:00:00Z`);
   shifted.setUTCDate(shifted.getUTCDate() + days);
   return shifted.toISOString().slice(0, 10);
+}
+
+export type ChatMessage = {
+  id: string;
+  group_id: string;
+  user_id: string;
+  type: string;
+  content: string;
+  /** The sender's own id for the message, which makes a retry safe. */
+  client_message_id: string;
+  created_at: string;
+};
+
+export type MessagePage = {
+  messages: ChatMessage[];
+  /** Cursor for the page before this one; absent once history runs out. */
+  before?: string;
+};
+
+/**
+ * The realtime feed for a group. Same origin and same session cookie as the
+ * REST API, so the socket is authorised by the handshake like any other request.
+ */
+export function chatSocketUrl(groupId: string): string {
+  return apiUrl(`/api/v1/ws/groups/${groupId}`).replace(/^http/, "ws");
+}
+
+/** "2026-03-15T04:05:06Z" to "12:05" in the reader's own timezone. */
+export function timeOfDay(isoInstant: string): string {
+  return new Date(isoInstant).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

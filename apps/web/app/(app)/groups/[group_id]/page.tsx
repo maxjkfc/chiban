@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
+import { ChatRoom } from "@/components/chat-room";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
@@ -27,6 +28,7 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const loadInvites = useCallback(
     (signal?: AbortSignal) =>
@@ -113,69 +115,94 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6">
-      <h1>{group?.name ?? "載入中…"}</h1>
-
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">成員</h2>
-        <ul className="flex flex-col gap-1">
-          {members.map((member) => (
-            <li key={member.user_id} className="flex items-center gap-3 text-sm">
-              <Avatar
-                mediaId={member.avatar_media_id}
-                displayName={member.display_name || "這位成員"}
-                className="size-8"
-              />
-              {/* A member who joined before finishing onboarding has no name yet. */}
-              <span className="flex-1">{member.display_name || "（尚未設定暱稱）"}</span>
-              {member.role === "owner" ? (
-                <span className="text-muted-foreground text-xs">管理者</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="flex flex-col gap-3 border-t pt-6">
-        <h2 className="text-sm font-medium">邀請朋友</h2>
-        <p className="text-muted-foreground text-xs">
-          連結 7 天內有效，可以給多個人使用。
-        </p>
-
-        {/* Disabled until the initial load lands: a create that resolves
-            before it would otherwise be overwritten by the slower list fetch. */}
-        <Button onClick={handleInvite} loading={busy} disabled={!group}>
-          {busy ? "處理中…" : "產生邀請連結"}
+    <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <header className="flex items-center gap-3 border-b p-4">
+        <h1 className="flex-1 text-lg">{group?.name ?? "載入中…"}</h1>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-expanded={showDetails}
+          onClick={() => setShowDetails((shown) => !shown)}
+        >
+          {showDetails ? "回到聊天" : "成員與邀請"}
         </Button>
+      </header>
 
-        {invites.length > 0 ? (
-          <ul className="flex flex-col gap-3">
-            {invites.map((invite) => (
-              <li key={invite.id} className="flex flex-col gap-2">
-                <Input
-                  readOnly
-                  value={inviteUrl(invite.code)}
-                  aria-label="邀請連結"
-                  onFocus={(event) => event.target.select()}
-                />
-                {/* Revoking is how a leaked link gets killed, so the owner
+      {/* The conversation is the page; membership and invites are settings
+          you visit occasionally, so they take the screen only when asked for. */}
+      {!showDetails ? (
+        <ChatRoom groupId={groupId} members={members} />
+      ) : (
+        <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">
+          <section className="flex flex-col gap-2">
+            <h2 className="text-sm font-medium">成員</h2>
+            <ul className="flex flex-col gap-1">
+              {members.map((member) => (
+                <li
+                  key={member.user_id}
+                  className="flex items-center gap-3 text-sm"
+                >
+                  <Avatar
+                    mediaId={member.avatar_media_id}
+                    displayName={member.display_name || "這位成員"}
+                    className="size-8"
+                  />
+                  {/* A member who joined before finishing onboarding has no name yet. */}
+                  <span className="flex-1">
+                    {member.display_name || "（尚未設定暱稱）"}
+                  </span>
+                  {member.role === "owner" ? (
+                    <span className="text-muted-foreground text-xs">
+                      管理者
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="flex flex-col gap-3 border-t pt-6">
+            <h2 className="text-sm font-medium">邀請朋友</h2>
+            <p className="text-muted-foreground text-xs">
+              連結 7 天內有效，可以給多個人使用。
+            </p>
+
+            {/* Disabled until the initial load lands: a create that resolves
+            before it would otherwise be overwritten by the slower list fetch. */}
+            <Button onClick={handleInvite} loading={busy} disabled={!group}>
+              {busy ? "處理中…" : "產生邀請連結"}
+            </Button>
+
+            {invites.length > 0 ? (
+              <ul className="flex flex-col gap-3">
+                {invites.map((invite) => (
+                  <li key={invite.id} className="flex flex-col gap-2">
+                    <Input
+                      readOnly
+                      value={inviteUrl(invite.code)}
+                      aria-label="邀請連結"
+                      onFocus={(event) => event.target.select()}
+                    />
+                    {/* Revoking is how a leaked link gets killed, so the owner
                     needs it on every invite, not just the one just created. */}
-                {group?.is_owner ? (
-                  <Button
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => handleRevoke(invite.id)}
-                  >
-                    撤銷這個連結
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+                    {group?.is_owner ? (
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => handleRevoke(invite.id)}
+                      >
+                        撤銷這個連結
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
 
-        {error ? <Message tone="error">{error}</Message> : null}
-      </section>
+            {error ? <Message tone="error">{error}</Message> : null}
+          </section>
+        </div>
+      )}
     </main>
   );
 }

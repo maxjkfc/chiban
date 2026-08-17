@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/storage v1.64.0
+	github.com/coder/websocket v1.8.15
 	github.com/disintegration/imaging v1.6.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0

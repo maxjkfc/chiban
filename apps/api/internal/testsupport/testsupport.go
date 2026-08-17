@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -30,6 +31,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"github.com/google/uuid"
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/database"
@@ -503,5 +508,140 @@ func truncateAll(t *testing.T, ctx context.Context, db *sql.DB) {
 	stmt := "TRUNCATE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE"
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		t.Fatalf("truncate tables: %v", err)
+	}
+}
+
+// Message is the chat message shape the API returns, over both HTTP and the
+// socket. One shape for both is the point: a message read from history and the
+// same message pushed live must be indistinguishable.
+type Message struct {
+	ID              string `json:"id"`
+	GroupID         string `json:"group_id"`
+	UserID          string `json:"user_id"`
+	Type            string `json:"type"`
+	Content         string `json:"content"`
+	ClientMessageID string `json:"client_message_id"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// MessagePage is one screen of history.
+type MessagePage struct {
+	Messages []Message `json:"messages"`
+	Before   string    `json:"before"`
+}
+
+// PostMessage sends a message with a caller-chosen client id, for tests about
+// retries and validation.
+func (a *App) PostMessage(groupID, content, clientMessageID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", map[string]string{
+		"content":           content,
+		"client_message_id": clientMessageID,
+	})
+}
+
+// SendMessage posts a message the way a fresh send does, with a new client id,
+// and fails the test unless it was accepted.
+func (a *App) SendMessage(groupID, content string) Message {
+	a.t.Helper()
+
+	resp := a.PostMessage(groupID, content, uuid.NewString())
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("send message: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var m Message
+	a.DecodeJSON(resp, &m)
+	return m
+}
+
+// History reads a page of a group's messages. query is appended as-is, so
+// tests can pass "?limit=2&before=...".
+func (a *App) History(groupID, query string) MessagePage {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/groups/"+groupID+"/messages"+query, nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("message history: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var page MessagePage
+	a.DecodeJSON(resp, &page)
+	return page
+}
+
+// ChatSocket is one open connection to a group's realtime feed.
+type ChatSocket struct {
+	t    *testing.T
+	conn *websocket.Conn
+}
+
+// DialChat attempts the WebSocket handshake and returns its HTTP response, so
+// a test can assert that a connection was refused and with what status.
+func (a *App) DialChat(groupID string) (*ChatSocket, *http.Response) {
+	a.t.Helper()
+
+	socketURL := "ws" + strings.TrimPrefix(a.BaseURL, "http") + "/api/v1/ws/groups/" + groupID
+
+	// The cookie jar only serves http(s) URLs, so the session travels as an
+	// explicit header here. The server still sees an ordinary cookie.
+	header := http.Header{}
+	header.Set("Cookie", auth.CookieName+"="+a.SessionCookie())
+
+	conn, resp, err := websocket.Dial(a.t.Context(), socketURL, &websocket.DialOptions{
+		HTTPHeader: header,
+	})
+	if err != nil {
+		if resp == nil {
+			a.t.Fatalf("dial chat socket: %v", err)
+		}
+		return nil, resp
+	}
+	a.t.Cleanup(func() { conn.CloseNow() })
+	return &ChatSocket{t: a.t, conn: conn}, resp
+}
+
+// ConnectChat opens the socket and fails the test unless the handshake worked.
+func (a *App) ConnectChat(groupID string) *ChatSocket {
+	a.t.Helper()
+
+	socket, resp := a.DialChat(groupID)
+	if socket == nil {
+		a.t.Fatalf("connect chat socket: status = %d", resp.StatusCode)
+	}
+	return socket
+}
+
+// Next waits for the next pushed message.
+func (s *ChatSocket) Next() Message {
+	s.t.Helper()
+
+	ctx, cancel := context.WithTimeout(s.t.Context(), 5*time.Second)
+	defer cancel()
+
+	var m Message
+	if err := wsjson.Read(ctx, s.conn, &m); err != nil {
+		s.t.Fatalf("read from chat socket: %v", err)
+	}
+	return m
+}
+
+// ExpectSilence fails if anything arrives in the next moment. Used where the
+// absence of a broadcast is the behaviour under test, such as a retry that
+// must not show up on everyone's screen a second time.
+func (s *ChatSocket) ExpectSilence() {
+	s.t.Helper()
+
+	ctx, cancel := context.WithTimeout(s.t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	var m Message
+	err := wsjson.Read(ctx, s.conn, &m)
+	if err == nil {
+		s.t.Fatalf("expected no broadcast, got %q", m.Content)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		s.t.Fatalf("read from chat socket: %v", err)
 	}
 }

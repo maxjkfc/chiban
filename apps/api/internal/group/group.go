@@ -203,6 +203,19 @@ func (s *Service) Join(ctx context.Context, userID uuid.UUID, code string) (Grou
 	return s.store.findForMember(ctx, invite.GroupID, userID)
 }
 
+// IsMember reports whether a user currently belongs to a group. Other domains
+// use it to scope what happens inside one without reading this package's
+// tables, so leaving a group takes effect everywhere at once.
+func (s *Service) IsMember(ctx context.Context, userID, groupID uuid.UUID) (bool, error) {
+	if _, err := s.store.findForMember(ctx, groupID, userID); err != nil {
+		if errors.Is(err, ErrNotMember) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // SharesGroup reports whether two users are currently in a group together.
 //
 // It exists so other domains can scope what one user may see of another

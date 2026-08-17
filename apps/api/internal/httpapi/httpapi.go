@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
+	"github.com/maxjkfc/chiban/apps/api/internal/chat"
 	"github.com/maxjkfc/chiban/apps/api/internal/group"
 	"github.com/maxjkfc/chiban/apps/api/internal/meal"
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
@@ -29,6 +30,10 @@ type Deps struct {
 	Profile *profile.Service
 	Group   *group.Service
 	Meal    *meal.Service
+	Chat    *chat.Service
+	// Hub fans realtime messages out to connected members. One per process:
+	// V0.1 is a single node, so a broadcast only has to reach this process.
+	Hub *chat.Hub
 	// WebOrigin is the one browser origin allowed to send credentialed
 	// requests. Empty disables CORS entirely, which is what tests want.
 	WebOrigin string
@@ -50,6 +55,13 @@ func NewRouter(d Deps) http.Handler {
 	}
 	if d.Meal == nil {
 		d.Meal = meal.NewService(d.DB, d.Storage)
+	}
+	if d.Hub == nil {
+		d.Hub = chat.NewHub()
+	}
+	if d.Chat == nil {
+		// Group membership is what scopes who may read or write in a chat.
+		d.Chat = chat.NewService(d.DB, d.Group, d.Hub)
 	}
 
 	mux := http.NewServeMux()
@@ -81,6 +93,10 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("PATCH /api/v1/meals/{meal_id}", d.Auth.RequireUser(patchMealHandler(d)))
 	mux.Handle("DELETE /api/v1/meals/{meal_id}", d.Auth.RequireUser(deleteMealHandler(d)))
 	mux.Handle("GET /api/v1/meal-images/{image_id}", d.Auth.RequireUser(getMealImageHandler(d)))
+
+	mux.Handle("POST /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(sendMessageHandler(d)))
+	mux.Handle("GET /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(listMessagesHandler(d)))
+	mux.Handle("GET /api/v1/ws/groups/{group_id}", d.Auth.RequireUser(chatSocketHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }

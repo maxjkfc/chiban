@@ -31,9 +31,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="zh-Hant"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="bg-background text-foreground min-h-full">
-        {/* Mobile-first: a phone-width column that stays centred on desktop. */}
-        <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
+      <body className="bg-background text-foreground h-full overflow-hidden">
+        {/* Mobile-first: a phone-width column that stays centred on desktop,
+            exactly one viewport tall so each screen scrolls its own content. */}
+        <div className="mx-auto flex h-dvh w-full max-w-md flex-col">
           {children}
         </div>
       </body>

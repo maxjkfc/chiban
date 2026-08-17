@@ -5,8 +5,13 @@ import { BottomNav } from "@/components/bottom-nav";
 export default function AppLayout({ children }: LayoutProps<"/">) {
   return (
     <AuthGate>
-      <div className="flex min-h-dvh flex-1 flex-col">
-        <div className="flex flex-1 flex-col">{children}</div>
+      {/* The content scrolls inside the shell rather than growing the page:
+          a document that grew would leave the chat's message list no height to
+          scroll within, pushing the composer off the screen. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {children}
+        </div>
         <BottomNav />
       </div>
     </AuthGate>
