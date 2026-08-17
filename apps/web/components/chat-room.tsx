@@ -66,13 +66,19 @@ function reconnectDelay(failures: number): number {
 function reconcile(
   current: ChatMessage[],
   incoming: ChatMessage[],
+  settling: Set<string>,
 ): ChatMessage[] {
   const truth = new Map(incoming.map((message) => [message.id, message]));
 
   let changed = false;
   const next = current.map((message) => {
     const server = truth.get(message.id);
-    if (!server || !differs(message, server)) return message;
+    // A message with a reaction still in flight is deliberately ahead of the
+    // server: the page was read before that reaction landed, so trusting it
+    // here would wipe out what the reader just tapped.
+    if (!server || settling.has(message.id) || !differs(message, server)) {
+      return message;
+    }
     changed = true;
     return server;
   });
@@ -195,6 +201,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // socket effect: depending on it there would tear the connection down and
   // rebuild it the moment the profile finishes loading.
   const myId = useRef<string | undefined>(undefined);
+  // Messages whose reaction request has not come back yet.
+  const settling = useRef(new Set<string>());
 
   const loadLatest = useCallback(
     (mode: "initial" | "reconnect", signal?: AbortSignal) => {
@@ -215,7 +223,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           // Anything already held arrived on the socket while this request was
           // in flight, so it is newer than every message in this page.
           setMessages((current) =>
-            merge(reconcile(current, page.messages), page.messages, "older"),
+            merge(
+              reconcile(current, page.messages, settling.current),
+              page.messages,
+              "older",
+            ),
           );
           setBefore(page.before);
           return;
@@ -243,7 +255,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           return;
         }
         setMessages((current) =>
-          merge(reconcile(current, page.messages), page.messages, "newer"),
+          merge(
+            reconcile(current, page.messages, settling.current),
+            page.messages,
+            "newer",
+          ),
         );
         // The button walks back from where the first page ended; a reconnect
         // must not rewind it past what is already on screen.
@@ -434,7 +450,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         `/api/v1/groups/${groupId}/messages?before=${encodeURIComponent(before)}`,
       );
       setMessages((current) =>
-        merge(reconcile(current, page.messages), page.messages, "older"),
+        merge(
+          reconcile(current, page.messages, settling.current),
+          page.messages,
+          "older",
+        ),
       );
       setBefore(page.before);
     } catch {
@@ -462,6 +482,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     // recognises as already done.
     setMessages((current) => applyReaction(current, change, me.id));
     setOpenActions(null);
+    settling.current.add(message.id);
 
     try {
       await apiFetch<void>(
@@ -477,6 +498,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         applyReaction(current, { ...change, added: mine }, me.id),
       );
       setError("反應沒有送出去");
+    } finally {
+      settling.current.delete(message.id);
     }
   }
 

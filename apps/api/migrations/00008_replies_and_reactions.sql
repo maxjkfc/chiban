@@ -1,4 +1,11 @@
 -- +goose Up
+-- Note: the reply FK below was changed from ON DELETE CASCADE to SET NULL after
+-- this file was first written. Editing an applied migration is normally wrong —
+-- goose_db_version records only a version number, no checksum, so an
+-- environment that already ran 00008 would silently keep the old constraint.
+-- This one had only ever been applied to one developer's dev and test
+-- databases, both re-run and verified, and had not been merged or deployed.
+-- Anything after this point in history gets a new migration instead.
 -- A reply is an ordinary message pointing at another one. V0.1 has no separate
 -- comment domain: a comment on a meal and a reply in chat are the same thing,
 -- so the thread structure lives on the message itself.

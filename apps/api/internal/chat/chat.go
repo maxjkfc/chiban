@@ -310,6 +310,19 @@ func (s *Service) changeReaction(
 		return err
 	}
 
+	if add && !changed {
+		// Either this reaction already existed, or the message was deleted
+		// between reading it and writing. The statement refuses both the same
+		// way, so ask which it was rather than answering "done" to a caller
+		// whose reaction never landed.
+		switch fresh, err := s.store.get(ctx, messageID); {
+		case err != nil:
+			return err
+		case fresh.Deleted:
+			return InvalidInputError{Field: "message_id", Message: "has been deleted"}
+		}
+	}
+
 	if changed {
 		s.hub.Broadcast(message.GroupID, Event{
 			Kind: EventReaction,
