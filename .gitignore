@@ -11,5 +11,8 @@ next-env.d.ts
 # Go
 /apps/api/bin/
 
+# Test-tool artifacts
+.playwright-mcp/
+
 # Local backups
 /backups/

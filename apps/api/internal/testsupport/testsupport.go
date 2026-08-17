@@ -152,6 +152,29 @@ func (a *App) RegisterUser(email string) User {
 	return user
 }
 
+// Profile is the profile shape the API returns.
+type Profile struct {
+	DisplayName string `json:"display_name"`
+	Timezone    string `json:"timezone"`
+}
+
+// SaveProfile completes onboarding for the currently logged-in user.
+func (a *App) SaveProfile(displayName, timezone string) Profile {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPatch, "/api/v1/me/profile", map[string]string{
+		"display_name": displayName,
+		"timezone":     timezone,
+	})
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("save profile: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var p Profile
+	a.DecodeJSON(resp, &p)
+	return p
+}
+
 // SessionCookie returns the current session token, for tests that need to
 // replay or tamper with it.
 func (a *App) SessionCookie() string {

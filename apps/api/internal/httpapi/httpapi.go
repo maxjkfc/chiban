@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
+	"github.com/maxjkfc/chiban/apps/api/internal/profile"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
@@ -21,6 +22,7 @@ type Deps struct {
 	Storage storage.ObjectStorage
 	Logger  *slog.Logger
 	Auth    *auth.Service
+	Profile *profile.Service
 	// WebOrigin is the one browser origin allowed to send credentialed
 	// requests. Empty disables CORS entirely, which is what tests want.
 	WebOrigin string
@@ -33,6 +35,9 @@ func NewRouter(d Deps) http.Handler {
 	if d.Auth == nil {
 		d.Auth = auth.NewService(d.DB)
 	}
+	if d.Profile == nil {
+		d.Profile = profile.NewService(d.DB)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(d))
@@ -41,6 +46,9 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", loginHandler(d))
 	mux.HandleFunc("POST /api/v1/auth/logout", logoutHandler(d))
 	mux.Handle("GET /api/v1/auth/me", d.Auth.RequireUser(meHandler()))
+
+	mux.Handle("GET /api/v1/me/profile", d.Auth.RequireUser(getProfileHandler(d)))
+	mux.Handle("PATCH /api/v1/me/profile", d.Auth.RequireUser(patchProfileHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }
