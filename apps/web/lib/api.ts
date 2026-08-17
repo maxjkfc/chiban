@@ -123,3 +123,27 @@ export type Meal = {
   description?: string;
   photo_ids: string[];
 };
+
+export type MealDay = {
+  date: string;
+  meals: Meal[];
+};
+
+const mealTypeLabels: Record<string, string> = {
+  breakfast: "早餐",
+  lunch: "午餐",
+  dinner: "晚餐",
+  snack: "點心",
+  other: "其他",
+};
+
+export function mealTypeLabel(mealType: string | undefined): string | null {
+  return mealType ? (mealTypeLabels[mealType] ?? null) : null;
+}
+
+/** Shifts a YYYY-MM-DD date by whole days without touching timezones. */
+export function shiftDate(date: string, days: number): string {
+  const shifted = new Date(`${date}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}

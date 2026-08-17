@@ -181,6 +181,59 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, in Input, upload
 	return m, nil
 }
 
+// UpdateInput is a partial edit. A nil field is left untouched.
+type UpdateInput struct {
+	MealType    *string
+	EatenAt     *time.Time
+	Description *string
+}
+
+// ListForDay returns the meals that belong to a calendar date for someone in
+// loc, oldest first. The caller supplies the zone: which day a meal falls on
+// is a property of the eater's profile, never of the server.
+func (s *Service) ListForDay(ctx context.Context, userID uuid.UUID, date Date, loc *time.Location) ([]Meal, error) {
+	start, end := DayRange(date, loc)
+	return s.store.listBetween(ctx, userID, start, end)
+}
+
+// Update edits a meal. Only the owner may: this is not the same check as
+// reading, which meal sharing widens later.
+func (s *Service) Update(ctx context.Context, userID, mealID uuid.UUID, in UpdateInput) (Meal, error) {
+	current, err := s.store.findOwned(ctx, mealID, userID)
+	if err != nil {
+		return Meal{}, err
+	}
+
+	next := Input{
+		MealType:    current.MealType,
+		EatenAt:     current.EatenAt,
+		Description: current.Description,
+	}
+	if in.MealType != nil {
+		next.MealType = *in.MealType
+	}
+	if in.EatenAt != nil {
+		next.EatenAt = *in.EatenAt
+	}
+	if in.Description != nil {
+		next.Description = *in.Description
+	}
+	if err := validate(&next); err != nil {
+		return Meal{}, err
+	}
+
+	return s.store.update(ctx, mealID, userID, next)
+}
+
+// Delete soft-deletes a meal: it leaves the owner's history, but any chat
+// thread that discussed it keeps its structure and shows a tombstone instead.
+func (s *Service) Delete(ctx context.Context, userID, mealID uuid.UUID) error {
+	if _, err := s.store.findOwned(ctx, mealID, userID); err != nil {
+		return err
+	}
+	return s.store.softDelete(ctx, mealID, userID, s.now())
+}
+
 // Get returns a meal the requester is allowed to see. In this slice that means
 // the owner; meal sharing widens it later, and every reader goes through here.
 func (s *Service) Get(ctx context.Context, userID, mealID uuid.UUID) (Meal, error) {

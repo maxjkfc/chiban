@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -84,6 +85,95 @@ func (s *store) findForReader(ctx context.Context, mealID, readerID uuid.UUID) (
 	}
 	m.Photos = photos
 	return m, nil
+}
+
+// findOwned is the authorization check for writing: unlike reading, it never
+// widens to shared groups.
+func (s *store) findOwned(ctx context.Context, mealID, ownerID uuid.UUID) (Meal, error) {
+	var m Meal
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, coalesce(meal_type, ''), eaten_at, coalesce(description, '')
+		FROM meal_records
+		WHERE id = $1 AND deleted_at IS NULL AND user_id = $2
+	`, mealID, ownerID).Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Meal{}, ErrNotFound
+	}
+	if err != nil {
+		return Meal{}, fmt.Errorf("meal: find owned: %w", err)
+	}
+	return m, nil
+}
+
+func (s *store) listBetween(ctx context.Context, userID uuid.UUID, start, end time.Time) ([]Meal, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, coalesce(meal_type, ''), eaten_at, coalesce(description, '')
+		FROM meal_records
+		WHERE user_id = $1 AND deleted_at IS NULL AND eaten_at >= $2 AND eaten_at < $3
+		ORDER BY eaten_at
+	`, userID, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("meal: list: %w", err)
+	}
+	defer rows.Close()
+
+	meals := []Meal{}
+	for rows.Next() {
+		var m Meal
+		if err := rows.Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description); err != nil {
+			return nil, fmt.Errorf("meal: scan: %w", err)
+		}
+		meals = append(meals, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range meals {
+		photos, err := s.listPhotos(ctx, meals[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		meals[i].Photos = photos
+	}
+	return meals, nil
+}
+
+func (s *store) update(ctx context.Context, mealID, ownerID uuid.UUID, in Input) (Meal, error) {
+	var m Meal
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE meal_records
+		SET meal_type = nullif($3, ''), eaten_at = $4, description = nullif($5, ''), updated_at = now()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		RETURNING id, user_id, coalesce(meal_type, ''), eaten_at, coalesce(description, '')
+	`, mealID, ownerID, in.MealType, in.EatenAt, in.Description).
+		Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Meal{}, ErrNotFound
+	}
+	if err != nil {
+		return Meal{}, fmt.Errorf("meal: update: %w", err)
+	}
+
+	photos, err := s.listPhotos(ctx, m.ID)
+	if err != nil {
+		return Meal{}, err
+	}
+	m.Photos = photos
+	return m, nil
+}
+
+// softDelete keeps the row: photos stay addressable for the chat tombstone
+// that slice 9 renders, and the reply thread around it is untouched.
+func (s *store) softDelete(ctx context.Context, mealID, ownerID uuid.UUID, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE meal_records SET deleted_at = $3, updated_at = now()
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`, mealID, ownerID, at)
+	if err != nil {
+		return fmt.Errorf("meal: delete: %w", err)
+	}
+	return nil
 }
 
 func (s *store) listPhotos(ctx context.Context, mealID uuid.UUID) ([]Photo, error) {

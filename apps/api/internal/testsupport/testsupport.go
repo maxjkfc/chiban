@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/database"
@@ -318,6 +319,40 @@ func (a *App) CreateMeal(photos ...[]byte) Meal {
 	var m Meal
 	a.DecodeJSON(resp, &m)
 	return m
+}
+
+// CreateMealAt uploads a meal eaten at a specific instant, for tests about
+// which day it lands on.
+func (a *App) CreateMealAt(eatenAt time.Time, photos ...[]byte) Meal {
+	a.t.Helper()
+
+	resp := a.UploadMeal(map[string]string{
+		"eaten_at": eatenAt.UTC().Format(time.RFC3339),
+	}, photos...)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("create meal: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var m Meal
+	a.DecodeJSON(resp, &m)
+	return m
+}
+
+// MealsOn returns the meals the API reports for a calendar date.
+func (a *App) MealsOn(date string) []Meal {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/meals?date="+date, nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("meals on %s: status = %d, want %d", date, resp.StatusCode, http.StatusOK)
+	}
+
+	var day struct {
+		Date  string `json:"date"`
+		Meals []Meal `json:"meals"`
+	}
+	a.DecodeJSON(resp, &day)
+	return day.Meals
 }
 
 // SessionCookie returns the current session token, for tests that need to
