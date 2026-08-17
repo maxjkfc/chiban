@@ -175,6 +175,73 @@ func (a *App) SaveProfile(displayName, timezone string) Profile {
 	return p
 }
 
+// Group is the group shape the API returns.
+type Group struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	IsOwner bool   `json:"is_owner"`
+}
+
+// Invite is the invite shape the API returns.
+type Invite struct {
+	ID        string `json:"id"`
+	Code      string `json:"code"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// Onboard registers a user, completes their profile and leaves the client
+// logged in as them. Most tests only care that a usable account exists.
+func (a *App) Onboard(email, displayName string) User {
+	a.t.Helper()
+
+	user := a.RegisterUser(email)
+	a.SaveProfile(displayName, "Asia/Taipei")
+	return user
+}
+
+// CreateGroup creates a group owned by the currently logged-in user.
+func (a *App) CreateGroup(name string) Group {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPost, "/api/v1/groups", map[string]string{"name": name})
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("create group: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var g Group
+	a.DecodeJSON(resp, &g)
+	return g
+}
+
+// CreateInvite issues an invite for the group as the current user.
+func (a *App) CreateInvite(groupID string) Invite {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/invites", nil)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("create invite: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var i Invite
+	a.DecodeJSON(resp, &i)
+	return i
+}
+
+// JoinGroup redeems an invite code as the current user.
+func (a *App) JoinGroup(code string) Group {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodPost, "/api/v1/groups/join", map[string]string{"code": code})
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("join group: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var g Group
+	a.DecodeJSON(resp, &g)
+	return g
+}
+
 // SessionCookie returns the current session token, for tests that need to
 // replay or tamper with it.
 func (a *App) SessionCookie() string {

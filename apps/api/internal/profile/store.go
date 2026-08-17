@@ -11,6 +11,7 @@ import (
 
 // DBTX is the slice of database/sql this package needs.
 type DBTX interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
@@ -51,4 +52,31 @@ func (s *store) upsert(ctx context.Context, userID uuid.UUID, displayName, timez
 		return Profile{}, fmt.Errorf("profile: upsert: %w", err)
 	}
 	return p, nil
+}
+
+func (s *store) displayNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	names := map[uuid.UUID]string{}
+	if len(userIDs) == 0 {
+		return names, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT user_id, display_name FROM profiles WHERE user_id = ANY($1)
+	`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("profile: display names: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id   uuid.UUID
+			name string
+		)
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, fmt.Errorf("profile: scan display name: %w", err)
+		}
+		names[id] = name
+	}
+	return names, rows.Err()
 }

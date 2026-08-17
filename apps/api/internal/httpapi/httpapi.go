@@ -12,7 +12,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
+	"github.com/maxjkfc/chiban/apps/api/internal/group"
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
@@ -23,6 +26,7 @@ type Deps struct {
 	Logger  *slog.Logger
 	Auth    *auth.Service
 	Profile *profile.Service
+	Group   *group.Service
 	// WebOrigin is the one browser origin allowed to send credentialed
 	// requests. Empty disables CORS entirely, which is what tests want.
 	WebOrigin string
@@ -38,6 +42,9 @@ func NewRouter(d Deps) http.Handler {
 	if d.Profile == nil {
 		d.Profile = profile.NewService(d.DB)
 	}
+	if d.Group == nil {
+		d.Group = group.NewService(d.DB)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(d))
@@ -49,6 +56,15 @@ func NewRouter(d Deps) http.Handler {
 
 	mux.Handle("GET /api/v1/me/profile", d.Auth.RequireUser(getProfileHandler(d)))
 	mux.Handle("PATCH /api/v1/me/profile", d.Auth.RequireUser(patchProfileHandler(d)))
+
+	mux.Handle("POST /api/v1/groups", d.Auth.RequireUser(createGroupHandler(d)))
+	mux.Handle("GET /api/v1/groups", d.Auth.RequireUser(listGroupsHandler(d)))
+	mux.Handle("POST /api/v1/groups/join", d.Auth.RequireUser(joinGroupHandler(d)))
+	mux.Handle("GET /api/v1/groups/{group_id}", d.Auth.RequireUser(getGroupHandler(d)))
+	mux.Handle("GET /api/v1/groups/{group_id}/members", d.Auth.RequireUser(listMembersHandler(d)))
+	mux.Handle("DELETE /api/v1/groups/{group_id}/members/me", d.Auth.RequireUser(leaveGroupHandler(d)))
+	mux.Handle("POST /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(createInviteHandler(d)))
+	mux.Handle("DELETE /api/v1/groups/{group_id}/invites/{invite_id}", d.Auth.RequireUser(revokeInviteHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }
@@ -96,6 +112,20 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// timeFormat is the one timestamp format the API emits: RFC 3339 in UTC.
+const timeFormat = time.RFC3339
+
+// pathUUID parses a path parameter, answering 404 for anything that is not a
+// UUID so that malformed IDs are indistinguishable from unknown ones.
+func pathUUID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
+	id, err := uuid.Parse(r.PathValue(name))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return uuid.UUID{}, false
+	}
+	return id, true
 }
 
 // writeError returns the one error shape the frontend has to handle. field is

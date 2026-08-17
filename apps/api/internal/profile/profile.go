@@ -119,3 +119,10 @@ func validateTimezone(name string) error {
 	}
 	return nil
 }
+
+// DisplayNames resolves several users at once, so callers listing a group's
+// members do not need a query per member. Users without a profile are simply
+// absent from the map.
+func (s *Service) DisplayNames(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]string, error) {
+	return s.store.displayNames(ctx, userIDs)
+}

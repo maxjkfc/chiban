@@ -77,3 +77,22 @@ export type Profile = {
 export function detectTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
+
+export type Group = {
+  id: string;
+  name: string;
+  role: "owner" | "member";
+  is_owner: boolean;
+};
+
+export type GroupMember = {
+  user_id: string;
+  display_name: string;
+  role: "owner" | "member";
+};
+
+export type Invite = {
+  id: string;
+  code: string;
+  expires_at: string;
+};

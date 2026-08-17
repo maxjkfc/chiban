@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -10,6 +10,12 @@ import { Label } from "@/components/ui/label";
 import { apiFetch, ApiRequestError, type User } from "@/lib/api";
 
 type Mode = "login" | "register";
+
+/** Only same-site paths, so a crafted ?next= cannot bounce users off-site. */
+function safeNext(next: string | null): string | null {
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return null;
+  return next;
+}
 
 const copy = {
   login: {
@@ -35,6 +41,9 @@ const copy = {
  */
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
+  // `next` carries an invite the user opened while signed out, so finishing
+  // registration drops them back into the invite flow instead of the home tab.
+  const next = useSearchParams().get("next");
   const text = copy[mode];
 
   const [email, setEmail] = useState("");
@@ -49,7 +58,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     try {
       await apiFetch<User>(text.path, { method: "POST", body: { email, password } });
-      router.replace("/today");
+      router.replace(safeNext(next) ?? "/today");
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
