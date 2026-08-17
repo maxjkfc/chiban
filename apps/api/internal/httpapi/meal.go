@@ -96,11 +96,6 @@ func getMealHandler(d Deps) http.HandlerFunc {
 	}
 }
 
-// getMealImageHandler streams a photo through the API.
-//
-// The browser only ever supplies an image ID; the backend resolves it to a
-// storage object itself. There is deliberately no endpoint that accepts a
-// path, so no request can ask for an arbitrary object.
 type patchMealRequest struct {
 	// Pointers so an omitted field stays untouched: editing a note must not
 	// silently reset the time.
@@ -215,6 +210,11 @@ func userLocation(w http.ResponseWriter, r *http.Request, d Deps, userID uuid.UU
 	return loc, true
 }
 
+// getMealImageHandler streams a photo through the API.
+//
+// The browser only ever supplies an image ID; the backend resolves it to a
+// storage object itself. There is deliberately no endpoint that accepts a
+// path, so no request can ask for an arbitrary object.
 func getMealImageHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		imageID, ok := pathUUID(w, r, "image_id")
