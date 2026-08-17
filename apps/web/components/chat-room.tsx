@@ -44,6 +44,15 @@ function merge(
   return where === "older" ? [...fresh, ...current] : [...current, ...fresh];
 }
 
+// How many failed handshakes in a row before the chat stops trying. Enough
+// tries, with the backoff below, to ride out about a minute offline.
+const maxReconnectAttempts = 6;
+
+/** Doubling backoff, so a server refusing on purpose is not hammered. */
+function reconnectDelay(failures: number): number {
+  return Math.min(2000 * 2 ** (failures - 1), 30_000);
+}
+
 type ChatRoomProps = {
   groupId: string;
   members: GroupMember[];
@@ -56,6 +65,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [sending, setSending] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
@@ -65,8 +75,13 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const held = useRef<ChatMessage[]>([]);
 
   const loadLatest = useCallback(
-    (mode: "initial" | "reconnect", signal?: AbortSignal) =>
-      apiFetch<MessagePage>(`/api/v1/groups/${groupId}/messages`, {
+    (mode: "initial" | "reconnect", signal?: AbortSignal) => {
+      // Snapshot now, not when the response lands: the socket keeps delivering
+      // while this request is in flight, and a message that arrives meanwhile
+      // would otherwise look like proof that no gap opened during the outage.
+      const beforeFetch = new Set(held.current.map((message) => message.id));
+
+      return apiFetch<MessagePage>(`/api/v1/groups/${groupId}/messages`, {
         signal,
       }).then((page) => {
         if (mode === "initial") {
@@ -77,15 +92,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           return;
         }
 
-        const known = new Set(held.current.map((message) => message.id));
-        const overlaps = page.messages.some((message) => known.has(message.id));
-        if (held.current.length > 0 && !overlaps) {
-          // Nothing in the newest page is already on screen, so more was said
-          // during the outage than one page holds and the two ends are
+        const overlaps = page.messages.some((message) =>
+          beforeFetch.has(message.id),
+        );
+        if (beforeFetch.size > 0 && !overlaps) {
+          // Nothing in the newest page was on screen when the outage ended, so
+          // more was said during it than one page holds and the two ends are
           // separated by a gap this page cannot bridge. Starting again from
           // this page keeps history walkable: its cursor leads back across the
           // gap, where merging would strand those messages out of reach.
-          setMessages(page.messages);
+          setMessages((current) =>
+            // Anything that arrived since the snapshot came in live and is
+            // newer than this page, so it survives the restart.
+            merge(
+              page.messages,
+              current.filter((message) => !beforeFetch.has(message.id)),
+              "newer",
+            ),
+          );
           setBefore(page.before);
           return;
         }
@@ -93,7 +117,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         // The button walks back from where the first page ended; a reconnect
         // must not rewind it past what is already on screen.
         setBefore((current) => current ?? page.before);
-      }),
+      });
+    },
     [groupId],
   );
 
@@ -127,12 +152,14 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     let socket: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
+    let failures = 0;
 
     function connect(isReconnect: boolean) {
       if (stopped) return;
       socket = new WebSocket(chatSocketUrl(groupId));
 
       socket.onopen = () => {
+        failures = 0;
         if (isReconnect) void loadLatest("reconnect").catch(() => {});
       };
       socket.onmessage = (event) => {
@@ -140,10 +167,21 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         setMessages((current) => merge(current, [message], "newer"));
       };
       socket.onclose = () => {
-        // A phone that locked its screen drops the socket; without this the
+        // A phone that locked its screen drops the socket; without a retry the
         // chat would look alive and silently stop receiving.
-        // ponytail: fixed delay, add backoff if it ever reconnect-storms.
-        if (!stopped) retry = setTimeout(() => connect(true), 2000);
+        if (stopped) return;
+
+        failures += 1;
+        if (failures > maxReconnectAttempts) {
+          // The browser cannot see why a handshake failed, so a refusal that
+          // will never succeed — the server no longer counts this user as a
+          // member — looks exactly like a flaky network. Giving up after
+          // enough tries turns a silent forever-loop of 403s into something
+          // the reader can act on.
+          setError("連線中斷了，重新整理看看");
+          return;
+        }
+        retry = setTimeout(() => connect(true), reconnectDelay(failures));
       };
     }
 
@@ -168,7 +206,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     event.preventDefault();
 
     const content = draft.trim();
-    if (!content) return;
+    if (!content || sending) return;
 
     // A send whose response never arrived may well have been stored. Retrying
     // it under the same id resolves to that message; a fresh id would post a
@@ -179,6 +217,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         : crypto.randomUUID();
     pending.current = { id: clientMessageID, content };
 
+    // One send at a time. Overlapping sends would each want the retry slot,
+    // and the loser would lose the id its retry depends on.
+    setSending(true);
     setError(null);
     setDraft("");
     try {
@@ -198,6 +239,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           ? caught.message
           : "送不出去，請稍後再試",
       );
+    } finally {
+      setSending(false);
     }
   }
 
@@ -299,7 +342,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           aria-label="訊息"
           maxLength={2000}
         />
-        <Button type="submit" size="icon" disabled={!draft.trim()}>
+        <Button type="submit" size="icon" disabled={!draft.trim() || sending}>
           <SendHorizonalIcon aria-hidden />
           <span className="sr-only">送出</span>
         </Button>
