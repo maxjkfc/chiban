@@ -61,25 +61,33 @@ func (h *Hub) Broadcast(groupID uuid.UUID, message Message) {
 		select {
 		case sub.Messages <- message:
 		default:
-			// The connection is not keeping up. Dropping the message is
-			// correct here: history is authoritative and a reconnect refetches
-			// it, whereas blocking would stall every other member's delivery.
+			// This connection is too far behind to catch up. Disconnecting it
+			// is more honest than skipping the message: the client notices the
+			// close, reconnects and refetches, where a silent drop would leave
+			// a hole in its history that nothing ever fills. Blocking instead
+			// would stall delivery to everyone else.
+			h.removeLocked(sub)
 		}
 	}
 }
 
 // Close detaches the subscription. Safe to call more than once.
 func (s *Subscription) Close() {
-	s.closeOnce.Do(func() {
-		s.hub.mu.Lock()
-		defer s.hub.mu.Unlock()
+	s.hub.mu.Lock()
+	defer s.hub.mu.Unlock()
 
-		if subs := s.hub.groups[s.groupID]; subs != nil {
-			delete(subs, s)
-			if len(subs) == 0 {
-				delete(s.hub.groups, s.groupID)
-			}
+	s.hub.removeLocked(s)
+}
+
+// removeLocked detaches a subscription and closes its channel. The caller must
+// hold the hub's mutex, which is why Broadcast can drop a subscription while
+// iterating rather than deadlocking against Close.
+func (h *Hub) removeLocked(sub *Subscription) {
+	if subs := h.groups[sub.groupID]; subs != nil {
+		delete(subs, sub)
+		if len(subs) == 0 {
+			delete(h.groups, sub.groupID)
 		}
-		close(s.Messages)
-	})
+	}
+	sub.closeOnce.Do(func() { close(sub.Messages) })
 }

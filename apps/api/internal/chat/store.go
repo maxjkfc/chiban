@@ -59,6 +59,15 @@ func (s *store) insertOrGet(
 	if err != nil {
 		return Message{}, false, err
 	}
+	if existing.GroupID != groupID {
+		// The id is unique per sender, not per sender and group, so a client
+		// that reuses one across groups would otherwise be handed a message
+		// belonging to a conversation it did not ask about. Say so instead.
+		return Message{}, false, InvalidInputError{
+			Field:   "client_message_id",
+			Message: "was already used for a message in another group",
+		}
+	}
 	return existing, false, nil
 }
 

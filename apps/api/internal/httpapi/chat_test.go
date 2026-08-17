@@ -274,3 +274,62 @@ func TestAMadeUpCursorIsRefused(t *testing.T) {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }
+
+// Leaving has to stop the messages already flowing, not just refuse the next
+// connection: a socket opened while a member outlives the membership that
+// authorised it.
+func TestLeavingCutsOffAnOpenSocket(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	invite := app.CreateInvite(group.ID)
+	mei := app.SessionCookie()
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.JoinGroup(invite.Code)
+	kai := app.SessionCookie()
+	socket := app.ConnectChat(group.ID)
+
+	// Prove the feed is live while 阿凱 is still a member, so the assertion
+	// after leaving cannot pass just because the socket never worked.
+	app.SetSessionCookie(mei)
+	app.SendMessage(group.ID, "在哪")
+	if delivered := socket.Next(); delivered.Content != "在哪" {
+		t.Fatalf("delivered %q, want %q", delivered.Content, "在哪")
+	}
+
+	app.SetSessionCookie(kai)
+	if resp := app.Request(http.MethodDelete,
+		"/api/v1/groups/"+group.ID+"/members/me", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("leave status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	app.SetSessionCookie(mei)
+	app.SendMessage(group.ID, "還在嗎")
+	socket.ExpectNoMessage()
+}
+
+// The client id is unique per sender, not per sender and group, so reusing one
+// in a second group must be refused rather than answered with the first
+// group's message.
+func TestAClientIDReusedInAnotherGroupIsRefused(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	lunch := app.CreateGroup("午餐團")
+	dinner := app.CreateGroup("晚餐團")
+
+	clientMessageID := uuid.NewString()
+	if resp := app.PostMessage(lunch.ID, "午餐吃什麼", clientMessageID); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first send status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	resp := app.PostMessage(dinner.ID, "晚餐吃什麼", clientMessageID)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("reused id status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if page := app.History(dinner.ID, ""); len(page.Messages) != 0 {
+		t.Fatalf("second group has %d messages, want 0", len(page.Messages))
+	}
+}

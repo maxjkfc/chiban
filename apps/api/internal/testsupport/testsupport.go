@@ -645,3 +645,18 @@ func (s *ChatSocket) ExpectSilence() {
 		s.t.Fatalf("read from chat socket: %v", err)
 	}
 }
+
+// ExpectNoMessage fails if a message arrives in the next moment. Unlike
+// ExpectSilence it tolerates the connection being closed, which is what the
+// server does when it decides this reader is no longer entitled to the feed.
+func (s *ChatSocket) ExpectNoMessage() {
+	s.t.Helper()
+
+	ctx, cancel := context.WithTimeout(s.t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	var m Message
+	if err := wsjson.Read(ctx, s.conn, &m); err == nil {
+		s.t.Fatalf("expected no message, got %q", m.Content)
+	}
+}

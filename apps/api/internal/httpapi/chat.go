@@ -156,6 +156,8 @@ func chatSocketHandler(d Deps) http.HandlerFunc {
 		// as soon as ServeHTTP returns, which would close the socket at once.
 		ctx := conn.CloseRead(context.WithoutCancel(r.Context()))
 
+		userID := auth.UserFromContext(r.Context()).ID
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -164,8 +166,22 @@ func chatSocketHandler(d Deps) http.HandlerFunc {
 				if !open {
 					return
 				}
+
+				// Membership is re-checked here, not just at the handshake: a
+				// member who leaves while this socket is open must stop
+				// receiving at once, and a failed check closes the connection
+				// rather than assuming they are still allowed.
+				allowed, err := d.Chat.MayReceive(ctx, userID, groupID)
+				if err != nil {
+					d.Logger.Error("chat membership re-check failed", "error", err)
+					return
+				}
+				if !allowed {
+					return
+				}
+
 				writeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				err := wsjson.Write(writeCtx, conn, newMessageResponse(message))
+				err = wsjson.Write(writeCtx, conn, newMessageResponse(message))
 				cancel()
 				if err != nil {
 					// The reader is gone or too slow; history covers what they

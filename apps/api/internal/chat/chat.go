@@ -186,6 +186,22 @@ func (s *Service) Subscribe(ctx context.Context, userID, groupID uuid.UUID) (*Su
 	return s.hub.Subscribe(groupID), nil
 }
 
+// MayReceive reports whether this user is still entitled to a group's
+// messages.
+//
+// A socket outlives the check that opened it: someone can leave the group with
+// the connection still open, and leaving has to take effect immediately rather
+// than whenever they happen to reconnect. Asking again before each delivery
+// keeps that true for every way membership can end, including ones added
+// later.
+//
+// ponytail: one indexed lookup per delivered message per connection, which is
+// nothing at V0.1's group sizes. Cache it against an invalidation signal if a
+// profile ever says otherwise.
+func (s *Service) MayReceive(ctx context.Context, userID, groupID uuid.UUID) (bool, error) {
+	return s.members.IsMember(ctx, userID, groupID)
+}
+
 func (s *Service) requireMember(ctx context.Context, userID, groupID uuid.UUID) error {
 	member, err := s.members.IsMember(ctx, userID, groupID)
 	if err != nil {

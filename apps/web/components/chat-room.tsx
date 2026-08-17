@@ -57,28 +57,56 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
+  // The id of the send currently in doubt, kept with the text it belongs to so
+  // a retry of the same message reuses it and an edited one does not.
+  const pending = useRef<{ id: string; content: string } | null>(null);
+  // What is on screen, readable from a callback that must not depend on the
+  // render it was created in. Only ever written by the effect below.
+  const held = useRef<ChatMessage[]>([]);
 
   const loadLatest = useCallback(
-    (signal?: AbortSignal) =>
+    (mode: "initial" | "reconnect", signal?: AbortSignal) =>
       apiFetch<MessagePage>(`/api/v1/groups/${groupId}/messages`, {
         signal,
       }).then((page) => {
-        // A reconnect refetch can only bring messages missed while the socket
-        // was down, and those are newer than everything already held.
+        if (mode === "initial") {
+          // Anything already held arrived on the socket while this request was
+          // in flight, so it is newer than every message in this page.
+          setMessages((current) => merge(current, page.messages, "older"));
+          setBefore(page.before);
+          return;
+        }
+
+        const known = new Set(held.current.map((message) => message.id));
+        const overlaps = page.messages.some((message) => known.has(message.id));
+        if (held.current.length > 0 && !overlaps) {
+          // Nothing in the newest page is already on screen, so more was said
+          // during the outage than one page holds and the two ends are
+          // separated by a gap this page cannot bridge. Starting again from
+          // this page keeps history walkable: its cursor leads back across the
+          // gap, where merging would strand those messages out of reach.
+          setMessages(page.messages);
+          setBefore(page.before);
+          return;
+        }
         setMessages((current) => merge(current, page.messages, "newer"));
-        // Only the first load defines where "earlier" starts; a reconnect
-        // refetch must not rewind the button past what is already on screen.
+        // The button walks back from where the first page ended; a reconnect
+        // must not rewind it past what is already on screen.
         setBefore((current) => current ?? page.before);
       }),
     [groupId],
   );
 
   useEffect(() => {
+    held.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     const controller = new AbortController();
 
     Promise.all([
       apiFetch<User>("/api/v1/auth/me", { signal: controller.signal }),
-      loadLatest(controller.signal),
+      loadLatest("initial", controller.signal),
     ])
       .then(([user]) => setMe(user))
       .catch((caught: unknown) => {
@@ -105,7 +133,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       socket = new WebSocket(chatSocketUrl(groupId));
 
       socket.onopen = () => {
-        if (isReconnect) void loadLatest().catch(() => {});
+        if (isReconnect) void loadLatest("reconnect").catch(() => {});
       };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data as string) as ChatMessage;
@@ -142,6 +170,15 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     const content = draft.trim();
     if (!content) return;
 
+    // A send whose response never arrived may well have been stored. Retrying
+    // it under the same id resolves to that message; a fresh id would post a
+    // second copy and defeat the whole point of the client id.
+    const clientMessageID =
+      pending.current?.content === content
+        ? pending.current.id
+        : crypto.randomUUID();
+    pending.current = { id: clientMessageID, content };
+
     setError(null);
     setDraft("");
     try {
@@ -149,9 +186,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         `/api/v1/groups/${groupId}/messages`,
         {
           method: "POST",
-          body: { content, client_message_id: crypto.randomUUID() },
+          body: { content, client_message_id: clientMessageID },
         },
       );
+      pending.current = null;
       setMessages((current) => merge(current, [sent], "newer"));
     } catch (caught) {
       setDraft(content);
