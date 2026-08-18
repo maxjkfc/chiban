@@ -336,6 +336,9 @@ func writeChatError(w http.ResponseWriter, d Deps, err error) {
 	case errors.Is(err, chat.ErrNotMember):
 		writeError(w, http.StatusForbidden, "you are not a member of this group")
 	case errors.Is(err, chat.ErrNotFound):
+		// One answer for "does not exist" and "not yours", matching the meal
+		// and photo reads. A 403 here would confirm that a media_id someone
+		// guessed is real, which is the one thing an opaque id is for.
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, chat.ErrNotAuthor):
 		writeError(w, http.StatusForbidden, "you can only delete your own messages")

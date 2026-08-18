@@ -283,3 +283,52 @@ func TestResendingAnAttachmentProducesOneMessage(t *testing.T) {
 		t.Fatalf("history has %d messages, want 1", len(page.Messages))
 	}
 }
+
+// Membership has to be checked against the group the picture was posted into,
+// not against membership in general. Mei and Kai share a group here, but the
+// picture went somewhere else: a rule that asked "is the reader in any group"
+// or "do these two share a group" would hand it over.
+func TestAMemberOfAnotherGroupCannotReadTheMedia(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	posted := app.CreateGroup("午餐團")
+	shared := app.CreateGroup("週末揪團")
+	invite := app.CreateInvite(shared.ID)
+	uploaded := app.UploadChatMedia(testsupport.JPEG(t, 200, 200), "lunch.jpg")
+	app.SendMedia(posted.ID, uploaded.ID)
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.JoinGroup(invite.Code)
+
+	if resp := app.ReadChatMedia(uploaded.ID); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a member of a different group read the image: %d", resp.StatusCode)
+	}
+}
+
+// Access follows current membership, not the membership held when the picture
+// was posted. The group's messages already work this way; the pictures in them
+// have to as well, or leaving a group would still leave its photos readable.
+func TestLeavingAGroupEndsAccessToItsMedia(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	invite := app.CreateInvite(group.ID)
+	uploaded := app.UploadChatMedia(testsupport.JPEG(t, 200, 200), "lunch.jpg")
+	app.SendMedia(group.ID, uploaded.ID)
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.JoinGroup(invite.Code)
+	if resp := app.ReadChatMedia(uploaded.ID); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a member could not read the image: %d", resp.StatusCode)
+	}
+
+	if resp := app.Request(http.MethodDelete, "/api/v1/groups/"+group.ID+"/members/me", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("leave status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	if resp := app.ReadChatMedia(uploaded.ID); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("a former member read the image: %d", resp.StatusCode)
+	}
+}
