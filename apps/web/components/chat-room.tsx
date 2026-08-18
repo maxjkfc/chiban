@@ -204,6 +204,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const attachment = useRef<{
     clientMessageID: string;
     mediaID: string;
+    replyToID?: string;
   } | null>(null);
   // What is on screen, readable from a callback that must not depend on the
   // render it was created in. Only ever written by the effect below.
@@ -458,6 +459,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     event.target.value = "";
     if (!file || sending) return;
 
+    // Read before the upload, not after. The reply controls stay live while
+    // the picture is uploading, so a reply target read on the far side of the
+    // await is whatever the composer drifted to in the meantime rather than
+    // what the reader was looking at when they picked the file.
+    const replyingTo = replyTo?.id;
+
     setError(null);
     setSending(true);
     try {
@@ -466,11 +473,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       const uploaded = await uploadChatMedia(file);
       // Same retry rule as a text message: the id is kept so a send whose
       // response was lost resolves to the message that already exists rather
-      // than posting the picture twice.
-      const clientMessageID = crypto.randomUUID();
-      attachment.current = { clientMessageID, mediaID: uploaded.id };
+      // than posting the picture twice. The reply target is kept for the same
+      // reason -- a retry that resolves to an already-stored message would
+      // otherwise claim a reply that message does not have.
+      attachment.current = {
+        clientMessageID: crypto.randomUUID(),
+        mediaID: uploaded.id,
+        replyToID: replyingTo,
+      };
 
-      await postAttachment(clientMessageID, uploaded.id);
+      await postAttachment(attachment.current);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
@@ -484,20 +496,29 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
   // Posting an upload that already exists. Separate from picking a file so a
   // retry re-sends the same attempt instead of uploading the picture again.
-  async function postAttachment(clientMessageID: string, mediaID: string) {
+  async function postAttachment(attempt: {
+    clientMessageID: string;
+    mediaID: string;
+    replyToID?: string;
+  }) {
     const sent = await apiFetch<ChatMessage>(
       `/api/v1/groups/${groupId}/messages`,
       {
         method: "POST",
         body: {
-          client_message_id: clientMessageID,
-          chat_media_id: mediaID,
-          reply_to_message_id: replyTo?.id,
+          client_message_id: attempt.clientMessageID,
+          chat_media_id: attempt.mediaID,
+          reply_to_message_id: attempt.replyToID,
         },
       },
     );
     attachment.current = null;
-    setReplyTo(null);
+    // Only the reply this picture actually used is cleared. One picked while
+    // the upload was in flight belongs to a message the reader has not sent
+    // yet, and clearing it would throw their choice away.
+    setReplyTo((current) =>
+      current?.id === attempt.replyToID ? null : current,
+    );
     setMessages((current) => merge(current, [sent], "newer"));
   }
 
@@ -508,10 +529,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setError(null);
     setSending(true);
     try {
-      await postAttachment(
-        pendingAttachment.clientMessageID,
-        pendingAttachment.mediaID,
-      );
+      await postAttachment(pendingAttachment);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError ? caught.message : "圖片還是送不出去",
