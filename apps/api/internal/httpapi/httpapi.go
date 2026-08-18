@@ -19,6 +19,7 @@ import (
 	"github.com/maxjkfc/chiban/apps/api/internal/group"
 	"github.com/maxjkfc/chiban/apps/api/internal/meal"
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
+	"github.com/maxjkfc/chiban/apps/api/internal/sticker"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
@@ -31,6 +32,7 @@ type Deps struct {
 	Group   *group.Service
 	Meal    *meal.Service
 	Chat    *chat.Service
+	Sticker *sticker.Service
 	// Hub fans realtime messages out to connected members. One per process:
 	// V0.1 is a single node, so a broadcast only has to reach this process.
 	Hub *chat.Hub
@@ -56,9 +58,15 @@ func NewRouter(d Deps) http.Handler {
 	if d.Hub == nil {
 		d.Hub = chat.NewHub()
 	}
+	if d.Sticker == nil {
+		// A sticker is a personal picture, so who may look at one is the same
+		// question an avatar asks: are these two in a group together.
+		d.Sticker = sticker.NewService(d.DB, d.Storage, d.Group)
+	}
 	if d.Chat == nil {
-		// Group membership is what scopes who may read or write in a chat.
-		d.Chat = chat.NewService(d.DB, d.Group, d.Hub, d.Storage)
+		// Group membership is what scopes who may read or write in a chat, and
+		// the sticker domain says whether a sticker is the sender's to send.
+		d.Chat = chat.NewService(d.DB, d.Group, d.Hub, d.Storage, d.Sticker)
 	}
 	if d.Meal == nil {
 		// Sharing widens who may read a meal, so meal asks the group domain
@@ -109,6 +117,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/v1/reaction-types", d.Auth.RequireUser(availableReactionsHandler()))
 	mux.Handle("POST /api/v1/chat-media", d.Auth.RequireUser(uploadChatMediaHandler(d)))
 	mux.Handle("GET /api/v1/chat-media/{media_id}", d.Auth.RequireUser(getChatMediaHandler(d)))
+
+	mux.Handle("POST /api/v1/me/stickers", d.Auth.RequireUser(addStickerHandler(d)))
+	mux.Handle("GET /api/v1/me/stickers", d.Auth.RequireUser(listStickersHandler(d)))
+	mux.Handle("DELETE /api/v1/me/stickers/{sticker_id}", d.Auth.RequireUser(deleteStickerHandler(d)))
+	mux.Handle("GET /api/v1/stickers/{sticker_id}/media", d.Auth.RequireUser(getStickerMediaHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }
