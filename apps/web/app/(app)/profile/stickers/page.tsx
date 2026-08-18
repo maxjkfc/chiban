@@ -110,6 +110,12 @@ export default function StickersPage() {
 
       {error ? <Message tone="error">{error}</Message> : null}
 
+      {stickers !== null && stickers.length > 0 ? (
+        <p className="text-muted-foreground text-xs">
+          刪除只會把貼圖收回這裡，已經傳出去的訊息還是看得到。
+        </p>
+      ) : null}
+
       {stickers === null ? (
         <p className="text-muted-foreground text-xs">載入中…</p>
       ) : stickers.length === 0 ? (

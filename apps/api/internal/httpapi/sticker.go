@@ -105,10 +105,13 @@ func getStickerMediaHandler(d Deps) http.HandlerFunc {
 		defer reader.Close()
 
 		w.Header().Set("Content-Type", contentType)
-		// A sticker's bytes never change and it is meant to be sent over and
-		// over, so this is the one image in the product worth caching hard.
-		// Permission can still change, which is what bounds it to an hour.
-		w.Header().Set("Cache-Control", "private, max-age=3600")
+		// 60 seconds, the same as an avatar, because it is the same rule: who
+		// may see this follows current group membership, and the cache is the
+		// one window in which a former member's browser can still draw it. The
+		// bytes never change, so a longer life would be free — what is being
+		// bounded is how long a stale permission survives, not how long the
+		// image stays good.
+		w.Header().Set("Cache-Control", "private, max-age=60")
 		if _, err := io.Copy(w, reader); err != nil {
 			d.Logger.Error("streaming sticker failed", "error", err)
 		}
@@ -120,9 +123,6 @@ func writeStickerError(w http.ResponseWriter, d Deps, err error) {
 	switch {
 	case errors.As(err, &invalid):
 		writeError(w, http.StatusBadRequest, invalid.Message, invalid.Field)
-	case errors.Is(err, sticker.ErrTooMany):
-		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("you can keep at most %d stickers", sticker.MaxPerUser), "file")
 	case errors.Is(err, sticker.ErrNotFound):
 		// One answer for "does not exist" and "not yours", the same as meals,
 		// photos and chat media. Anything else confirms which sticker ids are

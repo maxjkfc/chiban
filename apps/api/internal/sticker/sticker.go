@@ -24,18 +24,9 @@ import (
 // every domain's bucket to config.Buckets.
 const Bucket = "user-stickers"
 
-// MaxPerUser bounds one person's library. A picker is only useful while you
-// can still find things in it, and an unbounded library is an unbounded upload
-// budget per account.
-const MaxPerUser = 200
-
-var (
-	// ErrNotFound covers "no such sticker" and "not yours" alike. Telling the
-	// two apart would confirm which sticker ids are real.
-	ErrNotFound = errors.New("sticker: not found")
-	// ErrTooMany is returned once a library is full.
-	ErrTooMany = errors.New("sticker: too many stickers")
-)
+// ErrNotFound covers "no such sticker" and "not yours" alike. Telling the two
+// apart would confirm which sticker ids are real.
+var ErrNotFound = errors.New("sticker: not found")
 
 // InvalidInputError is a rejection the sender can fix.
 type InvalidInputError struct {
@@ -78,14 +69,6 @@ func NewService(db *sql.DB, objects storage.ObjectStorage, viewers Viewership) *
 // product, on the branch that keeps animation: a GIF sticker that arrived
 // animated has to still be animated when it comes back.
 func (s *Service) Add(ctx context.Context, userID uuid.UUID, data []byte) (Sticker, error) {
-	count, err := s.store.countForOwner(ctx, userID)
-	if err != nil {
-		return Sticker{}, err
-	}
-	if count >= MaxPerUser {
-		return Sticker{}, ErrTooMany
-	}
-
 	sanitized, err := media.SanitizeAllowingGIF(data)
 	if err != nil {
 		var invalid media.InvalidInputError

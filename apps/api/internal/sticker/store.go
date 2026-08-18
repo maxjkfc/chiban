@@ -44,17 +44,6 @@ func (s *store) insert(
 	return id, nil
 }
 
-func (s *store) countForOwner(ctx context.Context, userID uuid.UUID) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT count(*) FROM user_stickers WHERE user_id = $1 AND deleted_at IS NULL
-	`, userID).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("sticker: count: %w", err)
-	}
-	return count, nil
-}
-
 func (s *store) listForOwner(ctx context.Context, userID uuid.UUID) ([]Sticker, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, media_type FROM user_stickers
