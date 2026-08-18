@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"io"
 	"log/slog"
@@ -523,6 +525,7 @@ type Message struct {
 	Content         string     `json:"content"`
 	ClientMessageID string     `json:"client_message_id"`
 	MealRecordID    string     `json:"meal_record_id"`
+	ChatMediaID     string     `json:"chat_media_id"`
 	CreatedAt       string     `json:"created_at"`
 	Deleted         bool       `json:"deleted"`
 	ReplyTo         *ReplyTo   `json:"reply_to"`
@@ -812,4 +815,95 @@ func (a *App) CanSeeMeal(meal Meal) (mealOK, photoOK bool) {
 
 	return a.ReadMeal(meal.ID).StatusCode == http.StatusOK,
 		a.ReadMealImage(meal.PhotoIDs[0]).StatusCode == http.StatusOK
+}
+
+// ChatMedia is an upload the chat API accepted.
+type ChatMedia struct {
+	ID   string `json:"id"`
+	Type string `json:"media_type"`
+}
+
+// AnimatedGIF returns a small multi-frame GIF, for tests that need animation
+// to survive rather than bytes that merely claim to be a GIF.
+func AnimatedGIF(t *testing.T, width, height, frames int) []byte {
+	t.Helper()
+
+	palette := color.Palette{color.Black, color.White}
+	animation := &gif.GIF{}
+	for i := range frames {
+		frame := image.NewPaletted(image.Rect(0, 0, width, height), palette)
+		frame.SetColorIndex(i%width, 0, 1)
+		animation.Image = append(animation.Image, frame)
+		animation.Delay = append(animation.Delay, 10)
+	}
+
+	var buf bytes.Buffer
+	if err := gif.EncodeAll(&buf, animation); err != nil {
+		t.Fatalf("encode gif: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// PostChatMedia uploads a file, returning the raw response for tests that
+// expect it to be refused.
+func (a *App) PostChatMedia(data []byte, filename string) *http.Response {
+	a.t.Helper()
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("file", filename)
+	if err != nil {
+		a.t.Fatalf("create file part: %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		a.t.Fatalf("write file: %v", err)
+	}
+	if err := form.Close(); err != nil {
+		a.t.Fatalf("close form: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(a.t.Context(), http.MethodPost,
+		a.BaseURL+"/api/v1/chat-media", &body)
+	if err != nil {
+		a.t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		a.t.Fatalf("upload chat media: %v", err)
+	}
+	a.t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// UploadChatMedia uploads a file and fails the test unless it was accepted.
+func (a *App) UploadChatMedia(data []byte, filename string) ChatMedia {
+	a.t.Helper()
+
+	resp := a.PostChatMedia(data, filename)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("upload chat media: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var m ChatMedia
+	a.DecodeJSON(resp, &m)
+	return m
+}
+
+// SendMedia posts an uploaded image or GIF into a group.
+func (a *App) SendMedia(groupID, mediaID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", map[string]string{
+		"client_message_id": uuid.NewString(),
+		"chat_media_id":     mediaID,
+	})
+}
+
+// ReadChatMedia fetches the stored bytes as the current user.
+func (a *App) ReadChatMedia(mediaID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodGet, "/api/v1/chat-media/"+mediaID, nil)
 }

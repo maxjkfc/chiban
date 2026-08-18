@@ -1,6 +1,6 @@
 "use client";
 
-import { SendHorizonalIcon, XIcon } from "lucide-react";
+import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -12,8 +12,10 @@ import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   ApiRequestError,
+  chatMediaUrl,
   chatSocketUrl,
   timeOfDay,
+  uploadChatMedia,
   type ChatMessage,
   type GroupMember,
   type MessagePage,
@@ -21,6 +23,7 @@ import {
   type SocketEvent,
   type User,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 /**
  * Adds messages the list does not already have, keeping the order they came in.
@@ -196,6 +199,13 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
   const pending = useRef<{ id: string; content: string } | null>(null);
+  // An uploaded picture whose message did not get through. The upload already
+  // succeeded, so retrying re-sends the message rather than the file.
+  const attachment = useRef<{
+    clientMessageID: string;
+    mediaID: string;
+    replyToID?: string;
+  } | null>(null);
   // What is on screen, readable from a callback that must not depend on the
   // render it was created in. Only ever written by the effect below.
   const held = useRef<ChatMessage[]>([]);
@@ -443,6 +453,92 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     }
   }
 
+  async function handleAttach(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Clear it so picking the same file twice still fires a change.
+    event.target.value = "";
+    if (!file || sending) return;
+
+    // Read before the upload, not after. The reply controls stay live while
+    // the picture is uploading, so a reply target read on the far side of the
+    // await is whatever the composer drifted to in the meantime rather than
+    // what the reader was looking at when they picked the file.
+    const replyingTo = replyTo?.id;
+
+    setError(null);
+    setSending(true);
+    try {
+      // Two steps on purpose: the upload has to exist before a message can
+      // point at it, so a failed send never leaves a message showing nothing.
+      const uploaded = await uploadChatMedia(file);
+      // Same retry rule as a text message: the id is kept so a send whose
+      // response was lost resolves to the message that already exists rather
+      // than posting the picture twice. The reply target is kept for the same
+      // reason -- a retry that resolves to an already-stored message would
+      // otherwise claim a reply that message does not have.
+      attachment.current = {
+        clientMessageID: crypto.randomUUID(),
+        mediaID: uploaded.id,
+        replyToID: replyingTo,
+      };
+
+      await postAttachment(attachment.current);
+    } catch (caught) {
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "圖片送不出去，請稍後再試",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Posting an upload that already exists. Separate from picking a file so a
+  // retry re-sends the same attempt instead of uploading the picture again.
+  async function postAttachment(attempt: {
+    clientMessageID: string;
+    mediaID: string;
+    replyToID?: string;
+  }) {
+    const sent = await apiFetch<ChatMessage>(
+      `/api/v1/groups/${groupId}/messages`,
+      {
+        method: "POST",
+        body: {
+          client_message_id: attempt.clientMessageID,
+          chat_media_id: attempt.mediaID,
+          reply_to_message_id: attempt.replyToID,
+        },
+      },
+    );
+    attachment.current = null;
+    // Only the reply this picture actually used is cleared. One picked while
+    // the upload was in flight belongs to a message the reader has not sent
+    // yet, and clearing it would throw their choice away.
+    setReplyTo((current) =>
+      current?.id === attempt.replyToID ? null : current,
+    );
+    setMessages((current) => merge(current, [sent], "newer"));
+  }
+
+  async function handleRetryAttachment() {
+    const pendingAttachment = attachment.current;
+    if (!pendingAttachment || sending) return;
+
+    setError(null);
+    setSending(true);
+    try {
+      await postAttachment(pendingAttachment);
+    } catch (caught) {
+      setError(
+        caught instanceof ApiRequestError ? caught.message : "圖片還是送不出去",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleLoadEarlier() {
     if (!before) return;
 
@@ -597,6 +693,29 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                   <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
+                ) : message.chat_media_id ? (
+                  // An image is still an ordinary message: tapping it opens
+                  // the same actions as any other, so reply and reaction work
+                  // on a picture too.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className="cursor-pointer"
+                  >
+                    {/* A GIF animates in an img tag; nothing re-encodes it on
+                        the way here. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={chatMediaUrl(message.chat_media_id)}
+                      alt="傳送的圖片"
+                      className="max-h-64 w-56 rounded-2xl object-cover"
+                    />
+                  </button>
                 ) : message.meal_record_id ? (
                   // A meal card is still an ordinary message: it can be
                   // replied to and reacted to like any other, so the actions
@@ -724,6 +843,17 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         </Message>
       ) : null}
 
+      {attachment.current && !sending ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mx-4"
+          onClick={handleRetryAttachment}
+        >
+          重新送出這張圖片
+        </Button>
+      ) : null}
+
       {replyTo ? (
         <div className="bg-muted/50 mx-4 flex items-center gap-2 rounded-2xl px-3 py-2 text-xs">
           <span className="text-muted-foreground shrink-0">回覆</span>
@@ -745,6 +875,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       ) : null}
 
       <form onSubmit={handleSend} className="flex gap-2 border-t p-4">
+        {/* A native label opens the picker without waiting for hydration,
+            the same reason the record page does it this way. */}
+        <label
+          className={cn(
+            buttonVariants({ variant: "outline", size: "icon" }),
+            "cursor-pointer",
+            sending && "pointer-events-none opacity-50",
+          )}
+        >
+          <ImageIcon aria-hidden />
+          <span className="sr-only">傳送圖片</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleAttach}
+          />
+        </label>
         <Input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
