@@ -39,7 +39,8 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // Which groups can currently see this meal. Sharing is meant to be
   // revocable, so the owner has to be able to see what they gave away.
-  const [sharedWith, setSharedWith] = useState<string[]>([]);
+  const [sharedWith, setSharedWith] = useState<string[] | null>(null);
+  const [sharesFailed, setSharesFailed] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
 
   useEffect(() => {
@@ -63,18 +64,23 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
         );
       });
 
-    // Both are owner-only and 404 for anyone else, so a failure here just
-    // means there is no sharing section to show.
-    Promise.all([
-      apiFetch<{ group_ids: string[] }>(`/api/v1/meals/${mealId}/shares`, {
-        signal: controller.signal,
-      }),
-      apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal }),
-    ])
-      .then(([shares, joined]) => {
-        setSharedWith(shares.group_ids);
-        setGroups(joined);
-      })
+    // Two requests with independent failure modes, so they are kept apart: if
+    // the group list blips, an unknown share list must not be drawn as an
+    // empty one — that would hide real shares and the only way to revoke them.
+    apiFetch<{ group_ids: string[] }>(`/api/v1/meals/${mealId}/shares`, {
+      signal: controller.signal,
+    })
+      .then((shares) => setSharedWith(shares.group_ids))
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return;
+        // Owner-only, so 404 here just means this meal is not the reader's
+        // and there is no sharing section to draw.
+        if (caught instanceof ApiRequestError && caught.status === 404) return;
+        setSharesFailed(true);
+      });
+
+    apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal })
+      .then(setGroups)
       .catch(() => {});
 
     return () => controller.abort();
@@ -111,18 +117,32 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
     }
   }
 
-  async function handleUnshare(groupID: string) {
+  // One control per group, both directions. A meal that failed to share at
+  // publish time is shared from here, which is what makes the recovery path
+  // real rather than a one-shot chance on the record page.
+  async function handleToggleShare(groupID: string, shared: boolean) {
     setError(null);
     setStatus(null);
     setBusy(true);
     try {
-      await apiFetch<void>(`/api/v1/meals/${mealId}/shares/${groupID}`, {
-        method: "DELETE",
-      });
-      setSharedWith((current) => current.filter((id) => id !== groupID));
-      setStatus("已取消分享");
+      if (shared) {
+        await apiFetch<void>(`/api/v1/meals/${mealId}/shares/${groupID}`, {
+          method: "DELETE",
+        });
+        setSharedWith((current) =>
+          (current ?? []).filter((id) => id !== groupID),
+        );
+        setStatus("已取消分享");
+      } else {
+        await apiFetch<void>(`/api/v1/meals/${mealId}/shares`, {
+          method: "POST",
+          body: { group_ids: [groupID] },
+        });
+        setSharedWith((current) => [...(current ?? []), groupID]);
+        setStatus("已分享");
+      }
     } catch {
-      setError("取消分享失敗，請稍後再試");
+      setError(shared ? "取消分享失敗，請稍後再試" : "分享失敗，請稍後再試");
     } finally {
       setBusy(false);
     }
@@ -249,29 +269,38 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
           a meal shared by mistake is exactly the case this exists for. */}
       {meal.is_owner ? (
         <section className="flex flex-col gap-2 border-t pt-5">
-          <h2 className="text-sm font-medium">分享中的群組</h2>
-          {sharedWith.length === 0 ? (
+          <h2 className="text-sm font-medium">分享</h2>
+          {sharesFailed ? (
+            <Message tone="error">
+              無法載入分享狀態，重新整理後再試——在確定目前分享給誰之前，這裡不會顯示任何按鈕。
+            </Message>
+          ) : sharedWith === null ? (
+            <p className="text-muted-foreground text-xs">載入中…</p>
+          ) : groups.length === 0 ? (
             <p className="text-muted-foreground text-xs">
-              目前沒有分享給任何群組，只有你看得到。
+              還沒有加入任何群組，所以只有你看得到這一餐。
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {sharedWith.map((groupID) => (
-                <li key={groupID} className="flex items-center gap-3 text-sm">
-                  <span className="flex-1">
-                    {groups.find((group) => group.id === groupID)?.name ??
-                      "某個群組"}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => handleUnshare(groupID)}
+              {groups.map((group) => {
+                const shared = sharedWith.includes(group.id);
+                return (
+                  <li
+                    key={group.id}
+                    className="flex items-center gap-3 text-sm"
                   >
-                    取消分享
-                  </Button>
-                </li>
-              ))}
+                    <span className="flex-1">{group.name}</span>
+                    <Button
+                      variant={shared ? "outline" : "default"}
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => handleToggleShare(group.id, shared)}
+                    >
+                      {shared ? "取消分享" : "分享"}
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           )}
           <p className="text-muted-foreground text-xs">
