@@ -68,22 +68,35 @@ func (s *store) createPhoto(ctx context.Context, mealID uuid.UUID, object storag
 // for meal sharing in slice 9 is a single edit. Two hand-written copies of the
 // same predicate would drift, and the way they would drift is a shared-group
 // member reading a meal but 404ing on its photos, or the reverse.
+// $2 is the reader, $3 the groups they belong to.
 const readableMealsCTE = `
 	WITH readable AS (
-		SELECT id, user_id, meal_type, eaten_at, description
-		FROM meal_records
-		WHERE deleted_at IS NULL AND user_id = $2
+		SELECT m.id, m.user_id, m.meal_type, m.eaten_at, m.description
+		FROM meal_records m
+		WHERE m.deleted_at IS NULL AND (
+			m.user_id = $2
+			OR EXISTS (
+				SELECT 1 FROM meal_group_shares s
+				WHERE s.meal_record_id = m.id
+				  AND s.group_id = ANY($3)
+				  AND s.revoked_at IS NULL
+			)
+		)
 	)
 `
 
 // findForReader is the authorization check for reading a meal.
-func (s *store) findForReader(ctx context.Context, mealID, readerID uuid.UUID) (Meal, error) {
+func (s *store) findForReader(
+	ctx context.Context,
+	mealID, readerID uuid.UUID,
+	groupIDs []uuid.UUID,
+) (Meal, error) {
 	var m Meal
 	err := s.db.QueryRowContext(ctx, readableMealsCTE+`
 		SELECT id, user_id, coalesce(meal_type, ''), eaten_at, coalesce(description, '')
 		FROM readable
 		WHERE id = $1
-	`, mealID, readerID).Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description)
+	`, mealID, readerID, groupIDs).Scan(&m.ID, &m.UserID, &m.MealType, &m.EatenAt, &m.Description)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Meal{}, ErrNotFound
 	}
@@ -245,14 +258,18 @@ func (s *store) listPhotos(ctx context.Context, mealID uuid.UUID) ([]Photo, erro
 
 // findPhotoForReader resolves an application-level photo ID to its storage
 // location, applying the same authorization as reading the meal itself.
-func (s *store) findPhotoForReader(ctx context.Context, photoID, readerID uuid.UUID) (storedPhoto, error) {
+func (s *store) findPhotoForReader(
+	ctx context.Context,
+	photoID, readerID uuid.UUID,
+	groupIDs []uuid.UUID,
+) (storedPhoto, error) {
 	var p storedPhoto
 	err := s.db.QueryRowContext(ctx, readableMealsCTE+`
 		SELECT p.id, p.bucket, p.object_name, p.content_type
 		FROM meal_photos p
 		JOIN readable m ON m.id = p.meal_record_id
 		WHERE p.id = $1
-	`, photoID, readerID).Scan(&p.ID, &p.Bucket, &p.ObjectName, &p.ContentType)
+	`, photoID, readerID, groupIDs).Scan(&p.ID, &p.Bucket, &p.ObjectName, &p.ContentType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedPhoto{}, ErrPhotoNotFound
 	}
@@ -263,3 +280,55 @@ func (s *store) findPhotoForReader(ctx context.Context, photoID, readerID uuid.U
 }
 
 func bytesReader(data []byte) io.Reader { return bytes.NewReader(data) }
+
+// share records that a meal is visible to a group, or re-opens a share that
+// was taken back earlier. The primary key is what makes sharing twice a no-op
+// rather than a second row.
+func (s *store) share(ctx context.Context, mealID, groupID uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO meal_group_shares (meal_record_id, group_id)
+		VALUES ($1, $2)
+		ON CONFLICT (meal_record_id, group_id) DO UPDATE SET revoked_at = NULL
+	`, mealID, groupID)
+	if err != nil {
+		return fmt.Errorf("meal: share: %w", err)
+	}
+	return nil
+}
+
+// revoke takes a share back, reporting whether there was a live one to take.
+func (s *store) revoke(ctx context.Context, mealID, groupID uuid.UUID) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE meal_group_shares
+		SET revoked_at = now()
+		WHERE meal_record_id = $1 AND group_id = $2 AND revoked_at IS NULL
+	`, mealID, groupID)
+	if err != nil {
+		return false, fmt.Errorf("meal: revoke share: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// sharedGroups lists the groups a meal is currently shared with.
+func (s *store) sharedGroups(ctx context.Context, mealID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT group_id FROM meal_group_shares
+		WHERE meal_record_id = $1 AND revoked_at IS NULL
+		ORDER BY shared_at
+	`, mealID)
+	if err != nil {
+		return nil, fmt.Errorf("meal: list shares: %w", err)
+	}
+	defer rows.Close()
+
+	groupIDs := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("meal: scan share: %w", err)
+		}
+		groupIDs = append(groupIDs, id)
+	}
+	return groupIDs, rows.Err()
+}

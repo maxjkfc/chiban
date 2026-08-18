@@ -24,7 +24,7 @@ type store struct {
 // that quote it.
 const messageQuery = `
 	SELECT m.id, m.group_id, m.user_id, m.message_type, coalesce(m.content, ''),
-	       m.client_message_id, m.created_at, m.deleted_at,
+	       m.client_message_id, m.created_at, m.deleted_at, m.meal_record_id,
 	       parent.id, parent.user_id, coalesce(parent.content, ''), parent.deleted_at
 	FROM chat_messages m
 	LEFT JOIN chat_messages parent ON parent.id = m.reply_to_message_id`
@@ -39,6 +39,7 @@ func scanMessage(row scanner) (Message, error) {
 	var (
 		m          Message
 		deletedAt  sql.NullTime
+		mealID     uuid.NullUUID
 		parentID   uuid.NullUUID
 		parentUser uuid.NullUUID
 		parentText string
@@ -46,7 +47,7 @@ func scanMessage(row scanner) (Message, error) {
 	)
 
 	if err := row.Scan(&m.ID, &m.GroupID, &m.UserID, &m.Type, &m.Content,
-		&m.ClientMessageID, &m.CreatedAt, &deletedAt,
+		&m.ClientMessageID, &m.CreatedAt, &deletedAt, &mealID,
 		&parentID, &parentUser, &parentText, &parentGone); err != nil {
 		return Message{}, err
 	}
@@ -56,6 +57,9 @@ func scanMessage(row scanner) (Message, error) {
 		// rather than at the edge means no caller can hand it out by accident.
 		m.Deleted = true
 		m.Content = ""
+	}
+	if mealID.Valid {
+		m.MealRecordID = &mealID.UUID
 	}
 	if parentID.Valid {
 		preview := ReplyPreview{
@@ -266,4 +270,37 @@ func (s *store) reactionsFor(
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
+// insertMeal posts a meal card, or finds the one already posted.
+//
+// One card per meal per group: sharing again after revoking re-opens access
+// without starting a second conversation about the same plate of food.
+func (s *store) insertMeal(ctx context.Context, groupID, userID, mealID uuid.UUID) (uuid.UUID, bool, error) {
+	var id uuid.UUID
+
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO chat_messages (group_id, user_id, message_type, client_message_id, meal_record_id)
+		SELECT $1, $2, 'meal', gen_random_uuid(), $3
+		WHERE NOT EXISTS (
+			SELECT 1 FROM chat_messages
+			WHERE group_id = $1 AND meal_record_id = $3 AND deleted_at IS NULL
+		)
+		RETURNING id
+	`, groupID, userID, mealID).Scan(&id)
+	if err == nil {
+		return id, true, nil
+	}
+	if !errors.Is(err, errNoRows) {
+		return uuid.UUID{}, false, fmt.Errorf("chat: announce meal: %w", err)
+	}
+
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id FROM chat_messages
+		WHERE group_id = $1 AND meal_record_id = $2 AND deleted_at IS NULL
+	`, groupID, mealID).Scan(&id)
+	if err != nil {
+		return uuid.UUID{}, false, fmt.Errorf("chat: find meal message: %w", err)
+	}
+	return id, false, nil
 }

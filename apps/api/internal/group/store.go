@@ -217,3 +217,23 @@ func (s *store) revokeInvite(ctx context.Context, groupID, inviteID uuid.UUID, n
 	}
 	return nil
 }
+
+func (s *store) groupIDsFor(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT group_id FROM group_members WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("group: list membership: %w", err)
+	}
+	defer rows.Close()
+
+	groupIDs := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("group: scan membership: %w", err)
+		}
+		groupIDs = append(groupIDs, id)
+	}
+	return groupIDs, rows.Err()
+}

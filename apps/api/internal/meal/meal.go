@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,8 @@ var (
 	ErrNotFound = errors.New("meal: not found")
 	// ErrPhotoNotFound is the same idea for a single photo.
 	ErrPhotoNotFound = errors.New("meal: photo not found")
+	// ErrNotMember covers sharing into a group the owner does not belong to.
+	ErrNotMember = errors.New("meal: not a member of that group")
 )
 
 // InvalidInputError describes input the caller can fix.
@@ -81,21 +84,39 @@ type Upload struct {
 	Data []byte
 }
 
-type Service struct {
-	db      *sql.DB
-	store   *store
-	objects storage.ObjectStorage
-	now     func() time.Time
-	newName func(userID uuid.UUID, at time.Time, ext string) string
+// Membership answers which groups a reader belongs to. The group domain
+// implements it; keeping it an interface here means meal never reads
+// membership tables it does not own.
+type Membership interface {
+	GroupIDsFor(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
-func NewService(db *sql.DB, objects storage.ObjectStorage) *Service {
+// Announcer posts a meal into a group's conversation. The chat domain
+// implements it. Meal knows that sharing announces itself; it does not know
+// what a chat message is made of.
+type Announcer interface {
+	AnnounceMeal(ctx context.Context, userID, groupID, mealID uuid.UUID) error
+}
+
+type Service struct {
+	db        *sql.DB
+	store     *store
+	objects   storage.ObjectStorage
+	members   Membership
+	announcer Announcer
+	now       func() time.Time
+	newName   func(userID uuid.UUID, at time.Time, ext string) string
+}
+
+func NewService(db *sql.DB, objects storage.ObjectStorage, members Membership, announcer Announcer) *Service {
 	return &Service{
-		db:      db,
-		store:   &store{db: db},
-		objects: objects,
-		now:     time.Now,
-		newName: objectName,
+		db:        db,
+		store:     &store{db: db},
+		objects:   objects,
+		members:   members,
+		announcer: announcer,
+		now:       time.Now,
+		newName:   objectName,
 	}
 }
 
@@ -237,14 +258,23 @@ func (s *Service) Delete(ctx context.Context, userID, mealID uuid.UUID) error {
 // Get returns a meal the requester is allowed to see. In this slice that means
 // the owner; meal sharing widens it later, and every reader goes through here.
 func (s *Service) Get(ctx context.Context, userID, mealID uuid.UUID) (Meal, error) {
-	return s.store.findForReader(ctx, mealID, userID)
+	groupIDs, err := s.members.GroupIDsFor(ctx, userID)
+	if err != nil {
+		return Meal{}, err
+	}
+	return s.store.findForReader(ctx, mealID, userID, groupIDs)
 }
 
 // OpenPhoto streams a stored photo after checking the same authorization as
 // reading the meal. The client addresses photos by ID; it never supplies a
 // bucket or object name, so there is no path for it to traverse.
 func (s *Service) OpenPhoto(ctx context.Context, userID, photoID uuid.UUID) (io.ReadCloser, string, error) {
-	photo, err := s.store.findPhotoForReader(ctx, photoID, userID)
+	groupIDs, err := s.members.GroupIDsFor(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	photo, err := s.store.findPhotoForReader(ctx, photoID, userID, groupIDs)
 	if err != nil {
 		return nil, "", err
 	}
@@ -292,4 +322,66 @@ func objectName(userID uuid.UUID, at time.Time, ext string) string {
 	utc := at.UTC()
 	return fmt.Sprintf("users/%s/meals/%04d/%02d/%s.%s",
 		userID, utc.Year(), int(utc.Month()), uuid.NewString(), ext)
+}
+
+// Share makes a meal visible to groups the owner belongs to, and announces it
+// in each one.
+//
+// The order matters: the share is what authorizes reading, so it is written
+// first. A message that arrived before the share existed would show a card
+// nobody could open.
+func (s *Service) Share(ctx context.Context, ownerID, mealID uuid.UUID, groupIDs []uuid.UUID) error {
+	// Only the owner decides who sees a meal.
+	if _, err := s.store.findOwned(ctx, mealID, ownerID); err != nil {
+		return err
+	}
+
+	for _, groupID := range groupIDs {
+		// Sharing into a group you are not in would hand your meal to
+		// strangers, so membership is checked per group rather than assumed.
+		member, err := s.isMember(ctx, ownerID, groupID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return ErrNotMember
+		}
+
+		if err := s.store.share(ctx, mealID, groupID); err != nil {
+			return err
+		}
+		// Announcing is unconditional: posting the card is idempotent per meal
+		// and group, so this is the one place that decides there is only ever
+		// one card — including when a share is taken back and given again.
+		if err := s.announcer.AnnounceMeal(ctx, ownerID, groupID, mealID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Unshare takes a meal back from a group. The meal message stays: the
+// conversation it started belongs to the people who had it.
+func (s *Service) Unshare(ctx context.Context, ownerID, mealID, groupID uuid.UUID) error {
+	if _, err := s.store.findOwned(ctx, mealID, ownerID); err != nil {
+		return err
+	}
+	_, err := s.store.revoke(ctx, mealID, groupID)
+	return err
+}
+
+// SharedWith lists the groups a meal is currently shared with, for its owner.
+func (s *Service) SharedWith(ctx context.Context, ownerID, mealID uuid.UUID) ([]uuid.UUID, error) {
+	if _, err := s.store.findOwned(ctx, mealID, ownerID); err != nil {
+		return nil, err
+	}
+	return s.store.sharedGroups(ctx, mealID)
+}
+
+func (s *Service) isMember(ctx context.Context, userID, groupID uuid.UUID) (bool, error) {
+	groupIDs, err := s.members.GroupIDsFor(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(groupIDs, groupID), nil
 }

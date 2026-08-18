@@ -4,6 +4,7 @@ import { SendHorizonalIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
+import { MealCard } from "@/components/meal-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
@@ -595,6 +596,22 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                   <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
+                ) : message.meal_record_id ? (
+                  // A meal card is still an ordinary message: it can be
+                  // replied to and reacted to like any other, so the actions
+                  // open the same way.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className="cursor-pointer text-start"
+                  >
+                    <MealCard mealId={message.meal_record_id} />
+                  </button>
                 ) : (
                   // The bubble is the tap target: a phone has no hover, and a
                   // long press is a gesture people have to be taught.

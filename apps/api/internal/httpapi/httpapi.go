@@ -53,15 +53,17 @@ func NewRouter(d Deps) http.Handler {
 		// Group membership is what scopes who may see a picture.
 		d.Profile = profile.NewService(d.DB, d.Storage, d.Group)
 	}
-	if d.Meal == nil {
-		d.Meal = meal.NewService(d.DB, d.Storage)
-	}
 	if d.Hub == nil {
 		d.Hub = chat.NewHub()
 	}
 	if d.Chat == nil {
 		// Group membership is what scopes who may read or write in a chat.
 		d.Chat = chat.NewService(d.DB, d.Group, d.Hub)
+	}
+	if d.Meal == nil {
+		// Sharing widens who may read a meal, so meal asks the group domain
+		// which groups a reader is in, and asks chat to announce the card.
+		d.Meal = meal.NewService(d.DB, d.Storage, d.Group, d.Chat)
 	}
 
 	mux := http.NewServeMux()
@@ -93,6 +95,9 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("PATCH /api/v1/meals/{meal_id}", d.Auth.RequireUser(patchMealHandler(d)))
 	mux.Handle("DELETE /api/v1/meals/{meal_id}", d.Auth.RequireUser(deleteMealHandler(d)))
 	mux.Handle("GET /api/v1/meal-images/{image_id}", d.Auth.RequireUser(getMealImageHandler(d)))
+	mux.Handle("POST /api/v1/meals/{meal_id}/shares", d.Auth.RequireUser(shareMealHandler(d)))
+	mux.Handle("GET /api/v1/meals/{meal_id}/shares", d.Auth.RequireUser(listMealSharesHandler(d)))
+	mux.Handle("DELETE /api/v1/meals/{meal_id}/shares/{group_id}", d.Auth.RequireUser(unshareMealHandler(d)))
 
 	mux.Handle("POST /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(sendMessageHandler(d)))
 	mux.Handle("GET /api/v1/groups/{group_id}/messages", d.Auth.RequireUser(listMessagesHandler(d)))

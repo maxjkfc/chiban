@@ -317,6 +317,8 @@ func writeMealError(w http.ResponseWriter, d Deps, err error) {
 	switch {
 	case errors.As(err, &invalid):
 		writeError(w, http.StatusBadRequest, invalid.Message, invalid.Field)
+	case errors.Is(err, meal.ErrNotMember):
+		writeError(w, http.StatusForbidden, "you are not a member of that group", "group_ids")
 	case errors.Is(err, meal.ErrNotFound), errors.Is(err, meal.ErrPhotoNotFound):
 		// One answer for "does not exist" and "not yours": otherwise the API
 		// confirms which meal and photo IDs are real.
@@ -325,4 +327,87 @@ func writeMealError(w http.ResponseWriter, d Deps, err error) {
 		d.Logger.Error("meal request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+type shareMealRequest struct {
+	GroupIDs []string `json:"group_ids"`
+}
+
+type mealSharesResponse struct {
+	GroupIDs []string `json:"group_ids"`
+}
+
+func shareMealHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mealID, ok := pathUUID(w, r, "meal_id")
+		if !ok {
+			return
+		}
+
+		var req shareMealRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		groupIDs := make([]uuid.UUID, 0, len(req.GroupIDs))
+		for _, raw := range req.GroupIDs {
+			parsed, err := uuid.Parse(raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "group_ids must be UUIDs", "group_ids")
+				return
+			}
+			groupIDs = append(groupIDs, parsed)
+		}
+
+		userID := auth.UserFromContext(r.Context()).ID
+		if err := d.Meal.Share(r.Context(), userID, mealID, groupIDs); err != nil {
+			writeMealError(w, d, err)
+			return
+		}
+		writeMealShares(w, d, r, mealID, userID)
+	}
+}
+
+func listMealSharesHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mealID, ok := pathUUID(w, r, "meal_id")
+		if !ok {
+			return
+		}
+		writeMealShares(w, d, r, mealID, auth.UserFromContext(r.Context()).ID)
+	}
+}
+
+func unshareMealHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mealID, ok := pathUUID(w, r, "meal_id")
+		if !ok {
+			return
+		}
+		groupID, ok := pathUUID(w, r, "group_id")
+		if !ok {
+			return
+		}
+
+		if err := d.Meal.Unshare(r.Context(),
+			auth.UserFromContext(r.Context()).ID, mealID, groupID); err != nil {
+			writeMealError(w, d, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func writeMealShares(w http.ResponseWriter, d Deps, r *http.Request, mealID, userID uuid.UUID) {
+	groupIDs, err := d.Meal.SharedWith(r.Context(), userID, mealID)
+	if err != nil {
+		writeMealError(w, d, err)
+		return
+	}
+
+	out := mealSharesResponse{GroupIDs: make([]string, 0, len(groupIDs))}
+	for _, id := range groupIDs {
+		out.GroupIDs = append(out.GroupIDs, id.String())
+	}
+	writeJSON(w, http.StatusOK, out)
 }
