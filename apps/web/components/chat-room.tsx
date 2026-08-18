@@ -1,6 +1,6 @@
 "use client";
 
-import { SendHorizonalIcon, XIcon } from "lucide-react";
+import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -12,8 +12,10 @@ import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   ApiRequestError,
+  chatMediaUrl,
   chatSocketUrl,
   timeOfDay,
+  uploadChatMedia,
   type ChatMessage,
   type GroupMember,
   type MessagePage,
@@ -21,6 +23,7 @@ import {
   type SocketEvent,
   type User,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 /**
  * Adds messages the list does not already have, keeping the order they came in.
@@ -443,6 +446,40 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     }
   }
 
+  async function handleAttach(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    // Clear it so picking the same file twice still fires a change.
+    event.target.value = "";
+    if (!file || sending) return;
+
+    setError(null);
+    setSending(true);
+    try {
+      // Two steps on purpose: the upload has to exist before a message can
+      // point at it, so a failed send never leaves a message showing nothing.
+      const uploaded = await uploadChatMedia(file);
+      const sent = await apiFetch<ChatMessage>(
+        `/api/v1/groups/${groupId}/messages`,
+        {
+          method: "POST",
+          body: {
+            client_message_id: crypto.randomUUID(),
+            chat_media_id: uploaded.id,
+          },
+        },
+      );
+      setMessages((current) => merge(current, [sent], "newer"));
+    } catch (caught) {
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "圖片送不出去，請稍後再試",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleLoadEarlier() {
     if (!before) return;
 
@@ -597,6 +634,29 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                   <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
+                ) : message.chat_media_id ? (
+                  // An image is still an ordinary message: tapping it opens
+                  // the same actions as any other, so reply and reaction work
+                  // on a picture too.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className="cursor-pointer"
+                  >
+                    {/* A GIF animates in an img tag; nothing re-encodes it on
+                        the way here. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={chatMediaUrl(message.chat_media_id)}
+                      alt="傳送的圖片"
+                      className="max-h-64 w-56 rounded-2xl object-cover"
+                    />
+                  </button>
                 ) : message.meal_record_id ? (
                   // A meal card is still an ordinary message: it can be
                   // replied to and reacted to like any other, so the actions
@@ -745,6 +805,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       ) : null}
 
       <form onSubmit={handleSend} className="flex gap-2 border-t p-4">
+        {/* A native label opens the picker without waiting for hydration,
+            the same reason the record page does it this way. */}
+        <label
+          className={cn(
+            buttonVariants({ variant: "outline", size: "icon" }),
+            "cursor-pointer",
+            sending && "pointer-events-none opacity-50",
+          )}
+        >
+          <ImageIcon aria-hidden />
+          <span className="sr-only">傳送圖片</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleAttach}
+          />
+        </label>
         <Input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

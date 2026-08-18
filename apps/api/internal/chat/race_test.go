@@ -28,7 +28,7 @@ func TestAReactionCannotLandOnAMessageDeletedMeanwhile(t *testing.T) {
 	groupID := insertGroup(t, db, userID)
 	s := &store{db: db}
 
-	messageID, _, err := s.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil)
+	messageID, _, err := s.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -132,13 +132,13 @@ func TestAReactionThatLosesTheRaceIsReportedAsRefused(t *testing.T) {
 	groupID := insertGroup(t, db, userID)
 
 	plain := &store{db: db}
-	messageID, _, err := plain.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil)
+	messageID, _, err := plain.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
 
 	racing := &deleteAfterRead{DBTX: db, db: db, messageID: messageID}
-	service := NewService(racing, alwaysMember{}, NewHub())
+	service := NewService(racing, alwaysMember{}, NewHub(), nil)
 
 	err = service.React(ctx, userID, messageID, Reactions[0])
 

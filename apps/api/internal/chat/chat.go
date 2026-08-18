@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
 var (
@@ -55,6 +57,11 @@ const (
 	// TypeMeal is a shared meal's card. It carries a reference and nothing
 	// else — never a copy of the meal's description or photos.
 	TypeMeal = "meal"
+	// TypeImage and TypeGIF are uploads posted into a conversation. Like a
+	// meal card they carry only a reference; the bytes are read through the
+	// media endpoint, which decides who may see them.
+	TypeImage = "image"
+	TypeGIF   = "gif"
 
 	maxContentLength = 2000
 	// DefaultPageSize matches what a phone screen can show without the first
@@ -74,6 +81,8 @@ type Message struct {
 	// Deleted marks a tombstone. The row stays where it was so replies to it
 	// keep their context; only the content is gone.
 	Deleted bool
+	// ChatMediaID is the upload an image or GIF message shows.
+	ChatMediaID *uuid.UUID
 	// MealRecordID is what a meal card points at. The card's contents are
 	// fetched from the meal itself, so they cannot drift from it or outlive it.
 	MealRecordID *uuid.UUID
@@ -150,6 +159,10 @@ type SendInput struct {
 	// ReplyToMessageID makes this message an answer to another one in the same
 	// group. A reply is an ordinary message; V0.1 has no comment domain.
 	ReplyToMessageID *uuid.UUID
+	// ChatMediaID posts an already-uploaded image or GIF instead of text. The
+	// upload happens first and separately, so a failed send never leaves a
+	// half-written message pointing at nothing.
+	ChatMediaID *uuid.UUID
 }
 
 // Membership answers whether a user belongs to a group. The group domain
@@ -163,10 +176,11 @@ type Service struct {
 	store   *store
 	members Membership
 	hub     *Hub
+	objects storage.ObjectStorage
 }
 
-func NewService(db DBTX, members Membership, hub *Hub) *Service {
-	return &Service{store: &store{db: db}, members: members, hub: hub}
+func NewService(db DBTX, members Membership, hub *Hub, objects storage.ObjectStorage) *Service {
+	return &Service{store: &store{db: db}, members: members, hub: hub, objects: objects}
 }
 
 // Send stores a message and then hands the stored row to everyone connected.
@@ -180,14 +194,35 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		return Message{}, err
 	}
 
+	messageType := TypeText
 	content := strings.TrimSpace(in.Content)
-	if content == "" {
-		return Message{}, InvalidInputError{Field: "content", Message: "is required"}
-	}
-	if len([]rune(content)) > maxContentLength {
-		return Message{}, InvalidInputError{
-			Field:   "content",
-			Message: fmt.Sprintf("must be at most %d characters", maxContentLength),
+
+	if in.ChatMediaID != nil {
+		// The upload has to be the sender's own. Posting someone else's would
+		// widen who can read it to a group its uploader never chose.
+		mediaType, err := s.store.findOwnedMedia(ctx, *in.ChatMediaID, userID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return Message{}, InvalidInputError{
+					Field:   "chat_media_id",
+					Message: "is not one of your uploads",
+				}
+			}
+			return Message{}, err
+		}
+		// The kind comes from what was actually uploaded, never from the
+		// client: a GIF posted as an image would be re-encoded on the way out.
+		messageType = mediaType
+		content = ""
+	} else {
+		if content == "" {
+			return Message{}, InvalidInputError{Field: "content", Message: "is required"}
+		}
+		if len([]rune(content)) > maxContentLength {
+			return Message{}, InvalidInputError{
+				Field:   "content",
+				Message: fmt.Sprintf("must be at most %d characters", maxContentLength),
+			}
 		}
 	}
 	if in.ClientMessageID == uuid.Nil {
@@ -212,8 +247,8 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		}
 	}
 
-	id, inserted, err := s.store.insertOrGet(
-		ctx, groupID, userID, TypeText, content, in.ClientMessageID, in.ReplyToMessageID)
+	id, inserted, err := s.store.insertOrGet(ctx, groupID, userID, messageType, content,
+		in.ClientMessageID, in.ReplyToMessageID, in.ChatMediaID)
 	if err != nil {
 		return Message{}, err
 	}
