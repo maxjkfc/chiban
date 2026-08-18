@@ -1,10 +1,12 @@
 "use client";
 
 import { SendHorizonalIcon, XIcon } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
-import { Button } from "@/components/ui/button";
+import { MealCard } from "@/components/meal-card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
 import {
@@ -595,6 +597,22 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                   <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
+                ) : message.meal_record_id ? (
+                  // A meal card is still an ordinary message: it can be
+                  // replied to and reacted to like any other, so the actions
+                  // open the same way.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className="cursor-pointer text-start"
+                  >
+                    <MealCard mealId={message.meal_record_id} />
+                  </button>
                 ) : (
                   // The bubble is the tap target: a phone has no hover, and a
                   // long press is a gesture people have to be taught.
@@ -666,6 +684,22 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     >
                       回覆
                     </Button>
+                    {message.meal_record_id ? (
+                      // The card itself is the tap target for reacting, so
+                      // opening the meal lives here rather than as a link
+                      // nested inside that button. Styled as a button rather
+                      // than rendered through one: Button's asChild path
+                      // passes Slot more than one child and throws.
+                      <Link
+                        href={`/meals/${message.meal_record_id}`}
+                        className={buttonVariants({
+                          variant: "ghost",
+                          size: "sm",
+                        })}
+                      >
+                        查看紀錄
+                      </Link>
+                    ) : null}
                     {mine ? (
                       <Button
                         variant="destructive"

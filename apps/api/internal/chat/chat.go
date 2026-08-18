@@ -49,9 +49,12 @@ func (e InvalidInputError) Error() string {
 }
 
 const (
-	// TypeText is the only kind V0.1 can send at this point; meal, image, gif
-	// and sticker messages arrive with the slices that produce them.
+	// TypeText is the only kind a person types; the rest are produced by the
+	// features that create them.
 	TypeText = "text"
+	// TypeMeal is a shared meal's card. It carries a reference and nothing
+	// else — never a copy of the meal's description or photos.
+	TypeMeal = "meal"
 
 	maxContentLength = 2000
 	// DefaultPageSize matches what a phone screen can show without the first
@@ -71,6 +74,9 @@ type Message struct {
 	// Deleted marks a tombstone. The row stays where it was so replies to it
 	// keep their context; only the content is gone.
 	Deleted bool
+	// MealRecordID is what a meal card points at. The card's contents are
+	// fetched from the meal itself, so they cannot drift from it or outlive it.
+	MealRecordID *uuid.UUID
 	// ReplyTo is the message this one answers, when it answers one. It is
 	// joined at read time rather than copied at write time, so deleting the
 	// parent is reflected everywhere at once.
@@ -445,4 +451,31 @@ type DBTX interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// AnnounceMeal posts a shared meal's card into a group.
+//
+// The message carries the meal's id and nothing else: no description, no photo
+// paths. Whoever reads it fetches the meal through the meal API, which decides
+// there and then whether they may see it — so a card cannot outlive the share
+// that justified it.
+//
+// Membership is not re-checked here. The caller is the meal domain, which has
+// already established that this user may share into this group; a second check
+// would be a different question asked of the same fact.
+func (s *Service) AnnounceMeal(ctx context.Context, userID, groupID, mealID uuid.UUID) error {
+	id, inserted, err := s.store.insertMeal(ctx, groupID, userID, mealID)
+	if err != nil {
+		return err
+	}
+	if !inserted {
+		return nil
+	}
+
+	message, err := s.store.get(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
+	return nil
 }

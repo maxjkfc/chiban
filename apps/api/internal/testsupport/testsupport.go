@@ -321,6 +321,7 @@ type Meal struct {
 	EatenAtLocal string   `json:"eaten_at_local"`
 	Description  string   `json:"description"`
 	PhotoIDs     []string `json:"photo_ids"`
+	IsOwner      bool     `json:"is_owner"`
 }
 
 // JPEG returns a small valid JPEG, for tests that need a real photo rather
@@ -521,6 +522,7 @@ type Message struct {
 	Type            string     `json:"type"`
 	Content         string     `json:"content"`
 	ClientMessageID string     `json:"client_message_id"`
+	MealRecordID    string     `json:"meal_record_id"`
 	CreatedAt       string     `json:"created_at"`
 	Deleted         bool       `json:"deleted"`
 	ReplyTo         *ReplyTo   `json:"reply_to"`
@@ -770,4 +772,44 @@ func (a *App) DeleteMessage(messageID string) *http.Response {
 	a.t.Helper()
 
 	return a.Request(http.MethodDelete, "/api/v1/messages/"+messageID, nil)
+}
+
+// ShareMeal offers a meal to groups, returning the raw response for tests that
+// expect it to be refused.
+func (a *App) ShareMeal(mealID string, groupIDs ...string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/meals/"+mealID+"/shares",
+		map[string][]string{"group_ids": groupIDs})
+}
+
+// UnshareMeal takes a meal back from one group.
+func (a *App) UnshareMeal(mealID, groupID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodDelete, "/api/v1/meals/"+mealID+"/shares/"+groupID, nil)
+}
+
+// ReadMeal fetches a meal as the current user.
+func (a *App) ReadMeal(mealID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodGet, "/api/v1/meals/"+mealID, nil)
+}
+
+// ReadMealImage fetches a meal photo as the current user.
+func (a *App) ReadMealImage(imageID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodGet, "/api/v1/meal-images/"+imageID, nil)
+}
+
+// CanSeeMeal reports whether the current user can read a meal and its first
+// photo. Both answers come together on purpose: a reader who can open one but
+// not the other is the failure this checks for.
+func (a *App) CanSeeMeal(meal Meal) (mealOK, photoOK bool) {
+	a.t.Helper()
+
+	return a.ReadMeal(meal.ID).StatusCode == http.StatusOK,
+		a.ReadMealImage(meal.PhotoIDs[0]).StatusCode == http.StatusOK
 }

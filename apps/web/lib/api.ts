@@ -142,11 +142,33 @@ export type Meal = {
   eaten_at_local: string;
   description?: string;
   photo_ids: string[];
+  /** Whether this reader may edit it. Sharing means people who cannot now
+   * read the same shape. */
+  is_owner: boolean;
 };
 
 /** "2026-03-15T12:30" to "12:30", for the compact list view. */
 export function localTimeOfDay(eatenAtLocal: string): string {
   return eatenAtLocal.slice(11, 16);
+}
+
+/** Fetches a meal, or null when it is gone or not visible to this reader. */
+export async function fetchMeal(
+  mealId: string,
+  signal?: AbortSignal,
+): Promise<Meal | null> {
+  try {
+    return await apiFetch<Meal>(`/api/v1/meals/${mealId}`, { signal });
+  } catch (caught) {
+    // 404 covers both "deleted" and "not shared with you" on purpose, and the
+    // card says the same thing either way: there is nothing here to show.
+    if (caught instanceof ApiRequestError && caught.status === 404) return null;
+    throw caught;
+  }
+}
+
+export function mealImageUrl(imageId: string): string {
+  return apiUrl(`/api/v1/meal-images/${imageId}`);
 }
 
 export type MealDay = {
@@ -185,6 +207,9 @@ export type ChatMessage = {
   /** A removed message keeps its place with its content gone, so the replies
    * underneath it still read as answers to something. */
   deleted: boolean;
+  /** Set on a meal card. The meal itself is fetched by this id, never carried
+   * in the message, so the card is subject to the meal's own authorization. */
+  meal_record_id?: string;
   reply_to?: ReplyPreview;
   reactions: MessageReaction[];
 };

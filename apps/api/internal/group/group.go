@@ -251,3 +251,10 @@ func newInviteCode() (string, error) {
 	}
 	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)), nil
 }
+
+// GroupIDsFor lists the groups a user belongs to. Meal reads it to decide
+// which shared meals that user may see, without touching membership tables it
+// does not own.
+func (s *Service) GroupIDsFor(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	return s.store.groupIDsFor(ctx, userID)
+}

@@ -34,8 +34,11 @@ type messageResponse struct {
 	CreatedAt       string `json:"created_at"`
 	// Deleted messages keep their place with their content removed, so the
 	// replies underneath them still make sense.
-	Deleted bool           `json:"deleted"`
-	ReplyTo *replyResponse `json:"reply_to,omitempty"`
+	Deleted bool `json:"deleted"`
+	// Set on a meal card. The client fetches the meal by this id, which is what
+	// keeps the card's contents subject to the meal's own authorization.
+	MealRecordID string         `json:"meal_record_id,omitempty"`
+	ReplyTo      *replyResponse `json:"reply_to,omitempty"`
 	// Always present, so the client never has to guard against null.
 	Reactions []reactionResponse `json:"reactions"`
 }
@@ -108,6 +111,9 @@ func newMessageResponse(m chat.Message) messageResponse {
 		Reactions:       make([]reactionResponse, 0, len(m.Reactions)),
 	}
 
+	if m.MealRecordID != nil {
+		out.MealRecordID = m.MealRecordID.String()
+	}
 	if m.ReplyTo != nil {
 		out.ReplyTo = &replyResponse{
 			ID:      m.ReplyTo.ID.String(),

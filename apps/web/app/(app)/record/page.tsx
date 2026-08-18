@@ -7,7 +7,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Message } from "@/components/ui/message";
-import { apiUrl, ApiRequestError, type Meal } from "@/lib/api";
+import {
+  apiFetch,
+  apiUrl,
+  ApiRequestError,
+  type Group,
+  type Meal,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const MAX_PHOTOS = 4;
@@ -52,6 +58,10 @@ export default function RecordPage() {
   const [mealType, setMealType] = useState("");
   const [description, setDescription] = useState("");
   const [published, setPublished] = useState<Meal | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  // Which groups this meal goes to. Sharing is explicit: nothing is published
+  // to anyone unless it is ticked here.
+  const [shareWith, setShareWith] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -65,8 +75,21 @@ export default function RecordPage() {
   }, [photos]);
   useEffect(() => {
     return () => {
-      for (const photo of photosRef.current) URL.revokeObjectURL(photo.previewUrl);
+      for (const photo of photosRef.current)
+        URL.revokeObjectURL(photo.previewUrl);
     };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal })
+      .then(setGroups)
+      .catch(() => {
+        // Sharing is optional; a failed group list must not block recording.
+      });
+
+    return () => controller.abort();
   }, []);
 
   const remaining = MAX_PHOTOS - photos.length;
@@ -133,11 +156,31 @@ export default function RecordPage() {
         throw new ApiRequestError(response.status, undefined, detail?.error);
       }
 
-      setPublished((await response.json()) as Meal);
+      const meal = (await response.json()) as Meal;
+
+      // Shares are posted after the meal exists, never before: a card that
+      // arrived first would point at a meal nobody could open yet.
+      if (shareWith.length > 0) {
+        try {
+          await apiFetch<void>(`/api/v1/meals/${meal.id}/shares`, {
+            method: "POST",
+            body: { group_ids: shareWith },
+          });
+        } catch {
+          // The meal is safely recorded; only the sharing failed. The meal's
+          // own page can share it, so this points there instead of stranding
+          // the reader with an apology.
+          setError("已記錄，但分享到群組失敗——可以打開這一餐再分享一次");
+        }
+      }
+
+      setPublished(meal);
       for (const photo of photos) URL.revokeObjectURL(photo.previewUrl);
       setPhotos([]);
       setMealType("");
       setDescription("");
+      // Sharing is decided per meal, so the next one starts private again.
+      setShareWith([]);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
@@ -185,7 +228,9 @@ export default function RecordPage() {
       </div>
 
       <p className="text-muted-foreground text-xs">
-        {remaining > 0 ? `還可以加 ${remaining} 張` : `已達 ${MAX_PHOTOS} 張上限`}
+        {remaining > 0
+          ? `還可以加 ${remaining} 張`
+          : `已達 ${MAX_PHOTOS} 張上限`}
       </p>
 
       {photos.length > 0 ? (
@@ -252,6 +297,45 @@ export default function RecordPage() {
           </div>
         </div>
       </details>
+
+      {/* Sharing sits above the fold, unlike the other optional fields: it is
+          the difference between a private note and the point of the product,
+          and it has to be a decision made before publishing, not after. */}
+      {groups.length > 0 ? (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium">分享到</legend>
+          <ul className="flex flex-wrap gap-2">
+            {groups.map((group) => {
+              const chosen = shareWith.includes(group.id);
+              return (
+                <li key={group.id}>
+                  <button
+                    type="button"
+                    aria-pressed={chosen}
+                    onClick={() =>
+                      setShareWith((current) =>
+                        chosen
+                          ? current.filter((id) => id !== group.id)
+                          : [...current, group.id],
+                      )
+                    }
+                    className={`h-9 cursor-pointer rounded-full border px-3 text-sm ${
+                      chosen
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-input text-muted-foreground"
+                    }`}
+                  >
+                    {group.name}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-muted-foreground text-xs">
+            沒有選就只有自己看得到。
+          </p>
+        </fieldset>
+      ) : null}
 
       {error ? <Message tone="error">{error}</Message> : null}
 
