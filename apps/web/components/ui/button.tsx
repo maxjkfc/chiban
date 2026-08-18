@@ -68,14 +68,23 @@ function Button({
       data-loading={loading || undefined}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-      // Slot forwards to a single child, so the spinner is button-only.
       aria-busy={loading || undefined}
       disabled={asChild ? props.disabled : loading || props.disabled}
     >
-      {loading && !asChild ? (
-        <LoaderCircleIcon className="animate-spin" aria-hidden />
-      ) : null}
-      {children}
+      {/* asChild hands children straight through, unwrapped. Two JSX slots
+          here would make children a two-element array even when the first
+          evaluates to null — Slot counts slots, not survivors — and it only
+          accepts exactly one child. */}
+      {asChild ? (
+        children
+      ) : (
+        <>
+          {loading ? (
+            <LoaderCircleIcon className="animate-spin" aria-hidden />
+          ) : null}
+          {children}
+        </>
+      )}
     </Comp>
   );
 }
