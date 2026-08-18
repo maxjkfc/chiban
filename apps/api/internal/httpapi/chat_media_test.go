@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/maxjkfc/chiban/apps/api/internal/testsupport"
 )
 
@@ -218,5 +220,66 @@ func TestDeletingAMediaMessageEndsAccessToItsBytes(t *testing.T) {
 	app.SetSessionCookie(kai)
 	if resp := app.ReadChatMedia(uploaded.ID); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("the image outlived its message: %d", resp.StatusCode)
+	}
+}
+
+// An image answers a message like any other reply. The backend has always
+// allowed it; the frontend used to drop the target, which is what this pins.
+func TestAnImageCanBeAReply(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	original := app.SendMessage(group.ID, "今天吃什麼")
+	uploaded := app.UploadChatMedia(testsupport.JPEG(t, 200, 200), "lunch.jpg")
+
+	resp := app.Request(http.MethodPost, "/api/v1/groups/"+group.ID+"/messages",
+		map[string]string{
+			"client_message_id":   uuid.NewString(),
+			"chat_media_id":       uploaded.ID,
+			"reply_to_message_id": original.ID,
+		})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var sent testsupport.Message
+	app.DecodeJSON(resp, &sent)
+	if sent.ChatMediaID != uploaded.ID {
+		t.Fatalf("media = %s, want %s", sent.ChatMediaID, uploaded.ID)
+	}
+	if sent.ReplyTo == nil || sent.ReplyTo.ID != original.ID {
+		t.Fatalf("the image did not answer the message: %+v", sent.ReplyTo)
+	}
+}
+
+// Resending the same attachment under the same client id must resolve to the
+// message that already exists, not post the picture twice.
+func TestResendingAnAttachmentProducesOneMessage(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	uploaded := app.UploadChatMedia(testsupport.JPEG(t, 200, 200), "lunch.jpg")
+
+	clientMessageID := uuid.NewString()
+	body := map[string]string{
+		"client_message_id": clientMessageID,
+		"chat_media_id":     uploaded.ID,
+	}
+
+	first := app.Request(http.MethodPost, "/api/v1/groups/"+group.ID+"/messages", body)
+	var original testsupport.Message
+	app.DecodeJSON(first, &original)
+
+	retry := app.Request(http.MethodPost, "/api/v1/groups/"+group.ID+"/messages", body)
+	var resent testsupport.Message
+	app.DecodeJSON(retry, &resent)
+
+	if resent.ID != original.ID {
+		t.Fatalf("the retry made a second message: %s vs %s", resent.ID, original.ID)
+	}
+	if page := app.History(group.ID, ""); len(page.Messages) != 1 {
+		t.Fatalf("history has %d messages, want 1", len(page.Messages))
 	}
 }

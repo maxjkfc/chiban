@@ -53,8 +53,11 @@ func (s *Service) UploadMedia(ctx context.Context, userID uuid.UUID, data []byte
 	id, err := s.store.insertMedia(ctx, userID, mediaType, object, len(sanitized.Data))
 	if err != nil {
 		// The row is what makes the object reachable, so an object with no row
-		// is unreachable rubbish. Best effort: nothing downstream depends on it.
-		_ = s.objects.Delete(ctx, object.Bucket, object.Name)
+		// is unreachable rubbish. Detached from the request context: the write
+		// most likely failed because the request was cancelled, and a cleanup
+		// on that same context would fail for the same reason — exactly the
+		// case this exists for.
+		_ = s.objects.Delete(context.WithoutCancel(ctx), object.Bucket, object.Name)
 		return Media{}, err
 	}
 	return Media{ID: id, Type: mediaType}, nil

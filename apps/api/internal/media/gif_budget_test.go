@@ -87,3 +87,34 @@ func TestAnOrdinaryAnimationStillPasses(t *testing.T) {
 		t.Fatalf("%d frames survived, want 24", len(decoded.Image))
 	}
 }
+
+// The other shape of bomb: a tiny canvas makes a pixels-only budget allow
+// practically unlimited frames, while each frame still costs a fixed amount to
+// decode. 250,000 frames of 4x4 fit in 7.5 MB and allocate gigabytes.
+func TestAManyFrameBombOnATinyCanvasIsRejected(t *testing.T) {
+	bomb := bombGIF(t, 4, 4, 250_000)
+	t.Logf("bomb is %d KB on disk", len(bomb)/1024)
+	if len(bomb) > media.MaxUploadBytes {
+		t.Fatalf("the bomb is %d MB, over the upload limit — this shape is not reachable",
+			len(bomb)>>20)
+	}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+
+	_, err := media.SanitizeAllowingGIF(bomb)
+
+	runtime.ReadMemStats(&after)
+	allocated := after.TotalAlloc - before.TotalAlloc
+
+	if err == nil {
+		t.Fatal("the bomb was accepted")
+	}
+	const budget = 8 << 20
+	if allocated > budget {
+		t.Fatalf("rejecting it allocated %d MB, want under %d MB — it was decoded",
+			allocated>>20, budget>>20)
+	}
+	t.Logf("rejecting it allocated %d KB", allocated/1024)
+}

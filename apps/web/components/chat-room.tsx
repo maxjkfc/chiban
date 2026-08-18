@@ -199,6 +199,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
   const pending = useRef<{ id: string; content: string } | null>(null);
+  // An uploaded picture whose message did not get through. The upload already
+  // succeeded, so retrying re-sends the message rather than the file.
+  const attachment = useRef<{
+    clientMessageID: string;
+    mediaID: string;
+  } | null>(null);
   // What is on screen, readable from a callback that must not depend on the
   // render it was created in. Only ever written by the effect below.
   const held = useRef<ChatMessage[]>([]);
@@ -458,22 +464,57 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       // Two steps on purpose: the upload has to exist before a message can
       // point at it, so a failed send never leaves a message showing nothing.
       const uploaded = await uploadChatMedia(file);
-      const sent = await apiFetch<ChatMessage>(
-        `/api/v1/groups/${groupId}/messages`,
-        {
-          method: "POST",
-          body: {
-            client_message_id: crypto.randomUUID(),
-            chat_media_id: uploaded.id,
-          },
-        },
-      );
-      setMessages((current) => merge(current, [sent], "newer"));
+      // Same retry rule as a text message: the id is kept so a send whose
+      // response was lost resolves to the message that already exists rather
+      // than posting the picture twice.
+      const clientMessageID = crypto.randomUUID();
+      attachment.current = { clientMessageID, mediaID: uploaded.id };
+
+      await postAttachment(clientMessageID, uploaded.id);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
           ? caught.message
           : "圖片送不出去，請稍後再試",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Posting an upload that already exists. Separate from picking a file so a
+  // retry re-sends the same attempt instead of uploading the picture again.
+  async function postAttachment(clientMessageID: string, mediaID: string) {
+    const sent = await apiFetch<ChatMessage>(
+      `/api/v1/groups/${groupId}/messages`,
+      {
+        method: "POST",
+        body: {
+          client_message_id: clientMessageID,
+          chat_media_id: mediaID,
+          reply_to_message_id: replyTo?.id,
+        },
+      },
+    );
+    attachment.current = null;
+    setReplyTo(null);
+    setMessages((current) => merge(current, [sent], "newer"));
+  }
+
+  async function handleRetryAttachment() {
+    const pendingAttachment = attachment.current;
+    if (!pendingAttachment || sending) return;
+
+    setError(null);
+    setSending(true);
+    try {
+      await postAttachment(
+        pendingAttachment.clientMessageID,
+        pendingAttachment.mediaID,
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof ApiRequestError ? caught.message : "圖片還是送不出去",
       );
     } finally {
       setSending(false);
@@ -782,6 +823,17 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         <Message tone="error" className="mx-4">
           {error}
         </Message>
+      ) : null}
+
+      {attachment.current && !sending ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mx-4"
+          onClick={handleRetryAttachment}
+        >
+          重新送出這張圖片
+        </Button>
       ) : null}
 
       {replyTo ? (

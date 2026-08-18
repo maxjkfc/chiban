@@ -37,6 +37,18 @@ const (
 	// hundreds of megabytes. Roughly 31 MP — comfortably above any phone
 	// camera, far below what would threaten the Mac mini.
 	MaxDecodedPixels = 30 << 20
+	// MaxGIFFrames bounds frame count on its own, independent of canvas size.
+	//
+	// The pixel budget alone is not enough: it allows more frames the smaller
+	// the canvas gets, but each frame costs a fixed amount regardless of size
+	// — an image.Paletted header, its palette, the LZW reader's state. Measured
+	// at roughly 21 KB a frame, so a 4x4 canvas with 250,000 frames fits in a
+	// 7.5 MB file, passes a pixels-only budget, and allocates 5.2 GB.
+	//
+	// A thousand is far past any real animation: reaction GIFs run tens of
+	// frames. Together with the pixel budget the worst accepted case is about
+	// 50 MB — 1000 frames of fixed cost plus the 30 MP of pixels.
+	MaxGIFFrames = 1000
 	// MaxStoredDimension is the longest edge kept after resizing. Phone photos
 	// are far larger than a mobile screen ever needs.
 	MaxStoredDimension = 1600
@@ -143,7 +155,10 @@ func sanitizeGIF(data []byte) (Sanitized, error) {
 	// Frame count multiplies the canvas: a 2 MB file of thousands of small
 	// frames decodes to hundreds of megabytes, which neither the size nor the
 	// dimension limit catches.
-	maxFrames := MaxDecodedPixels / canvas
+	// Two bounds, because there are two shapes of bomb: a few frames on a huge
+	// canvas, and a great many frames on a tiny one. Neither bound catches the
+	// other's shape.
+	maxFrames := min(MaxGIFFrames, MaxDecodedPixels/canvas)
 	frames, err := gifFrameCount(data, maxFrames)
 	if err != nil {
 		return Sanitized{}, InvalidInputError{Message: "file is not a valid GIF"}
