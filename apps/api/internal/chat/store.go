@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
 // errNoRows is the package-internal signal that a statement returned nothing.
@@ -24,7 +26,7 @@ type store struct {
 // that quote it.
 const messageQuery = `
 	SELECT m.id, m.group_id, m.user_id, m.message_type, coalesce(m.content, ''),
-	       m.client_message_id, m.created_at, m.deleted_at, m.meal_record_id,
+	       m.client_message_id, m.created_at, m.deleted_at, m.meal_record_id, m.chat_media_id,
 	       parent.id, parent.user_id, coalesce(parent.content, ''), parent.deleted_at
 	FROM chat_messages m
 	LEFT JOIN chat_messages parent ON parent.id = m.reply_to_message_id`
@@ -40,6 +42,7 @@ func scanMessage(row scanner) (Message, error) {
 		m          Message
 		deletedAt  sql.NullTime
 		mealID     uuid.NullUUID
+		chatMedia  uuid.NullUUID
 		parentID   uuid.NullUUID
 		parentUser uuid.NullUUID
 		parentText string
@@ -47,7 +50,7 @@ func scanMessage(row scanner) (Message, error) {
 	)
 
 	if err := row.Scan(&m.ID, &m.GroupID, &m.UserID, &m.Type, &m.Content,
-		&m.ClientMessageID, &m.CreatedAt, &deletedAt, &mealID,
+		&m.ClientMessageID, &m.CreatedAt, &deletedAt, &mealID, &chatMedia,
 		&parentID, &parentUser, &parentText, &parentGone); err != nil {
 		return Message{}, err
 	}
@@ -60,6 +63,9 @@ func scanMessage(row scanner) (Message, error) {
 	}
 	if mealID.Valid {
 		m.MealRecordID = &mealID.UUID
+	}
+	if chatMedia.Valid {
+		m.ChatMediaID = &chatMedia.UUID
 	}
 	if parentID.Valid {
 		preview := ReplyPreview{
@@ -87,17 +93,18 @@ func (s *store) insertOrGet(
 	groupID, userID uuid.UUID,
 	messageType, content string,
 	clientMessageID uuid.UUID,
-	replyTo *uuid.UUID,
+	replyTo, chatMediaID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
 	var id uuid.UUID
 
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO chat_messages
-			(group_id, user_id, message_type, content, client_message_id, reply_to_message_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
+			(group_id, user_id, message_type, content, client_message_id,
+			 reply_to_message_id, chat_media_id)
+		VALUES ($1, $2, $3, nullif($4, ''), $5, $6, $7)
 		ON CONFLICT (user_id, client_message_id) DO NOTHING
 		RETURNING id
-	`, groupID, userID, messageType, content, clientMessageID, replyTo).Scan(&id)
+	`, groupID, userID, messageType, content, clientMessageID, replyTo, chatMediaID).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}
@@ -304,4 +311,78 @@ func (s *store) insertMeal(ctx context.Context, groupID, userID, mealID uuid.UUI
 		return uuid.UUID{}, false, fmt.Errorf("chat: find meal message: %w", err)
 	}
 	return id, false, nil
+}
+
+// storedMedia is the pointer to one upload's bytes.
+type storedMedia struct {
+	Bucket      string
+	ObjectName  string
+	ContentType string
+}
+
+func (s *store) insertMedia(
+	ctx context.Context,
+	userID uuid.UUID,
+	mediaType string,
+	object storage.Object,
+	sizeBytes int,
+) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO chat_media (user_id, media_type, bucket, object_name, content_type, size_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, userID, mediaType, object.Bucket, object.Name, object.ContentType, sizeBytes).Scan(&id)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("chat: insert media: %w", err)
+	}
+	return id, nil
+}
+
+// findMediaForReader is the authorization check for reading chat media.
+//
+// Uploading it is enough to read your own; anyone else needs it to be attached
+// to a live message in a group they belong to. Posting is therefore what
+// widens access, and deleting the message narrows it again — the same rule the
+// message itself follows.
+func (s *store) findMediaForReader(ctx context.Context, mediaID, readerID uuid.UUID) (storedMedia, error) {
+	var m storedMedia
+	err := s.db.QueryRowContext(ctx, `
+		SELECT cm.bucket, cm.object_name, cm.content_type
+		FROM chat_media cm
+		WHERE cm.id = $1 AND cm.deleted_at IS NULL AND (
+			cm.user_id = $2
+			OR EXISTS (
+				SELECT 1
+				FROM chat_messages msg
+				JOIN group_members gm ON gm.group_id = msg.group_id
+				WHERE msg.chat_media_id = cm.id
+				  AND msg.deleted_at IS NULL
+				  AND gm.user_id = $2
+			)
+		)
+	`, mediaID, readerID).Scan(&m.Bucket, &m.ObjectName, &m.ContentType)
+	if errors.Is(err, errNoRows) {
+		return storedMedia{}, ErrNotFound
+	}
+	if err != nil {
+		return storedMedia{}, fmt.Errorf("chat: find media: %w", err)
+	}
+	return m, nil
+}
+
+// findOwnedMedia checks the sender is posting their own upload.
+func (s *store) findOwnedMedia(ctx context.Context, mediaID, userID uuid.UUID) (string, error) {
+	var mediaType string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT media_type FROM chat_media
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`, mediaID, userID).Scan(&mediaType)
+	if errors.Is(err, errNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("chat: find own media: %w", err)
+	}
+	return mediaType, nil
 }

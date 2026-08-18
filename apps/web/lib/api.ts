@@ -210,6 +210,9 @@ export type ChatMessage = {
   /** Set on a meal card. The meal itself is fetched by this id, never carried
    * in the message, so the card is subject to the meal's own authorization. */
   meal_record_id?: string;
+  /** Set on an image or GIF message. The bytes are read through the media
+   * endpoint, which decides who may see them. */
+  chat_media_id?: string;
   reply_to?: ReplyPreview;
   reactions: MessageReaction[];
 };
@@ -252,6 +255,32 @@ export type MessagePage = {
  * The realtime feed for a group. Same origin and same session cookie as the
  * REST API, so the socket is authorised by the handshake like any other request.
  */
+export function chatMediaUrl(mediaId: string): string {
+  return apiUrl(`/api/v1/chat-media/${mediaId}`);
+}
+
+export type ChatMedia = {
+  id: string;
+  media_type: "image" | "gif";
+};
+
+/** Uploads one image or GIF and returns its application id. */
+export async function uploadChatMedia(file: File): Promise<ChatMedia> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await fetch(apiUrl("/api/v1/chat-media"), {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as ApiError | null;
+    throw new ApiRequestError(response.status, detail?.field, detail?.error);
+  }
+  return (await response.json()) as ChatMedia;
+}
+
 export function chatSocketUrl(groupId: string): string {
   return apiUrl(`/api/v1/ws/groups/${groupId}`).replace(/^http/, "ws");
 }

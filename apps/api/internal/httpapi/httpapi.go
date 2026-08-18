@@ -58,7 +58,7 @@ func NewRouter(d Deps) http.Handler {
 	}
 	if d.Chat == nil {
 		// Group membership is what scopes who may read or write in a chat.
-		d.Chat = chat.NewService(d.DB, d.Group, d.Hub)
+		d.Chat = chat.NewService(d.DB, d.Group, d.Hub, d.Storage)
 	}
 	if d.Meal == nil {
 		// Sharing widens who may read a meal, so meal asks the group domain
@@ -107,6 +107,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("DELETE /api/v1/messages/{message_id}/reactions/{reaction_type}",
 		d.Auth.RequireUser(removeReactionHandler(d)))
 	mux.Handle("GET /api/v1/reaction-types", d.Auth.RequireUser(availableReactionsHandler()))
+	mux.Handle("POST /api/v1/chat-media", d.Auth.RequireUser(uploadChatMediaHandler(d)))
+	mux.Handle("GET /api/v1/chat-media/{media_id}", d.Auth.RequireUser(getChatMediaHandler(d)))
 
 	return withCORS(d.WebOrigin, mux)
 }

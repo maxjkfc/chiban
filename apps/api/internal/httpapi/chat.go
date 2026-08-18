@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/chat"
+	"github.com/maxjkfc/chiban/apps/api/internal/media"
 )
 
 type sendMessageRequest struct {
@@ -22,6 +25,8 @@ type sendMessageRequest struct {
 	ClientMessageID string `json:"client_message_id"`
 	// Optional: makes this message a reply to another one in the same group.
 	ReplyToMessageID string `json:"reply_to_message_id"`
+	// Optional: posts an already-uploaded image or GIF instead of text.
+	ChatMediaID string `json:"chat_media_id"`
 }
 
 type messageResponse struct {
@@ -37,8 +42,11 @@ type messageResponse struct {
 	Deleted bool `json:"deleted"`
 	// Set on a meal card. The client fetches the meal by this id, which is what
 	// keeps the card's contents subject to the meal's own authorization.
-	MealRecordID string         `json:"meal_record_id,omitempty"`
-	ReplyTo      *replyResponse `json:"reply_to,omitempty"`
+	MealRecordID string `json:"meal_record_id,omitempty"`
+	// Set on an image or GIF message; the bytes are read from the media
+	// endpoint, which decides who may see them.
+	ChatMediaID string         `json:"chat_media_id,omitempty"`
+	ReplyTo     *replyResponse `json:"reply_to,omitempty"`
 	// Always present, so the client never has to guard against null.
 	Reactions []reactionResponse `json:"reactions"`
 }
@@ -114,6 +122,9 @@ func newMessageResponse(m chat.Message) messageResponse {
 	if m.MealRecordID != nil {
 		out.MealRecordID = m.MealRecordID.String()
 	}
+	if m.ChatMediaID != nil {
+		out.ChatMediaID = m.ChatMediaID.String()
+	}
 	if m.ReplyTo != nil {
 		out.ReplyTo = &replyResponse{
 			ID:      m.ReplyTo.ID.String(),
@@ -168,10 +179,22 @@ func sendMessageHandler(d Deps) http.HandlerFunc {
 			replyTo = &parsed
 		}
 
+		var chatMediaID *uuid.UUID
+		if req.ChatMediaID != "" {
+			parsed, err := uuid.Parse(req.ChatMediaID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest,
+					"chat_media_id must be a UUID", "chat_media_id")
+				return
+			}
+			chatMediaID = &parsed
+		}
+
 		message, err := d.Chat.Send(r.Context(), auth.UserFromContext(r.Context()).ID, groupID, chat.SendInput{
 			Content:          req.Content,
 			ClientMessageID:  clientMessageID,
 			ReplyToMessageID: replyTo,
+			ChatMediaID:      chatMediaID,
 		})
 		if err != nil {
 			writeChatError(w, d, err)
@@ -313,6 +336,9 @@ func writeChatError(w http.ResponseWriter, d Deps, err error) {
 	case errors.Is(err, chat.ErrNotMember):
 		writeError(w, http.StatusForbidden, "you are not a member of this group")
 	case errors.Is(err, chat.ErrNotFound):
+		// One answer for "does not exist" and "not yours", matching the meal
+		// and photo reads. A 403 here would confirm that a media_id someone
+		// guessed is real, which is the one thing an opaque id is for.
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, chat.ErrNotAuthor):
 		writeError(w, http.StatusForbidden, "you can only delete your own messages")
@@ -385,5 +411,81 @@ func removeReactionHandler(d Deps) http.HandlerFunc {
 func availableReactionsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string][]string{"reaction_types": chat.Reactions})
+	}
+}
+
+type chatMediaResponse struct {
+	ID string `json:"id"`
+	// Type is what was actually uploaded, decided by decoding rather than by
+	// what the client claimed.
+	Type string `json:"media_type"`
+}
+
+func uploadChatMediaHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, media.MaxUploadBytes+(1<<20))
+
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			writeError(w, http.StatusBadRequest,
+				"request must be multipart/form-data within the size limit")
+			return
+		}
+		defer r.MultipartForm.RemoveAll()
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "a file is required", "file")
+			return
+		}
+		defer file.Close()
+
+		if header.Size > media.MaxUploadBytes {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("the file must be smaller than %d MB", media.MaxUploadBytes>>20), "file")
+			return
+		}
+
+		data, err := io.ReadAll(io.LimitReader(file, media.MaxUploadBytes+1))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "could not read the uploaded file", "file")
+			return
+		}
+
+		uploaded, err := d.Chat.UploadMedia(r.Context(), auth.UserFromContext(r.Context()).ID, data)
+		if err != nil {
+			writeChatError(w, d, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, chatMediaResponse{
+			ID:   uploaded.ID.String(),
+			Type: uploaded.Type,
+		})
+	}
+}
+
+func getChatMediaHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mediaID, ok := pathUUID(w, r, "media_id")
+		if !ok {
+			return
+		}
+
+		reader, contentType, err := d.Chat.OpenMedia(r.Context(),
+			auth.UserFromContext(r.Context()).ID, mediaID)
+		if err != nil {
+			writeChatError(w, d, err)
+			return
+		}
+		defer reader.Close()
+
+		w.Header().Set("Content-Type", contentType)
+		// The bytes behind a media id never change, but permission does: a
+		// message can be deleted, or the reader can leave the group. An hour
+		// keeps a scrolling chat from refetching every image while bounding
+		// how long a device can render one it no longer has access to.
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		if _, err := io.Copy(w, reader); err != nil {
+			d.Logger.Error("streaming chat media failed", "error", err)
+		}
 	}
 }

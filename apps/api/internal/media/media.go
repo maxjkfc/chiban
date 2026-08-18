@@ -8,6 +8,7 @@ package media
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/gif"
@@ -36,6 +37,18 @@ const (
 	// hundreds of megabytes. Roughly 31 MP — comfortably above any phone
 	// camera, far below what would threaten the Mac mini.
 	MaxDecodedPixels = 30 << 20
+	// MaxGIFFrames bounds frame count on its own, independent of canvas size.
+	//
+	// The pixel budget alone is not enough: it allows more frames the smaller
+	// the canvas gets, but each frame costs a fixed amount regardless of size
+	// — an image.Paletted header, its palette, the LZW reader's state. Measured
+	// at roughly 21 KB a frame, so a 4x4 canvas with 250,000 frames fits in a
+	// 7.5 MB file, passes a pixels-only budget, and allocates 5.2 GB.
+	//
+	// A thousand is far past any real animation: reaction GIFs run tens of
+	// frames. Together with the pixel budget the worst accepted case is about
+	// 50 MB — 1000 frames of fixed cost plus the 30 MP of pixels.
+	MaxGIFFrames = 1000
 	// MaxStoredDimension is the longest edge kept after resizing. Phone photos
 	// are far larger than a mobile screen ever needs.
 	MaxStoredDimension = 1600
@@ -116,25 +129,47 @@ func sanitize(data []byte, allowGIF bool) (Sanitized, error) {
 	return sanitizeStill(data)
 }
 
-// sanitizeGIF keeps the original bytes so animation survives. It still decodes
-// every frame first, so a file that merely claims to be a GIF is rejected.
+// sanitizeGIF keeps the original bytes so animation survives.
 //
-// ponytail: the frame budget is checked after DecodeAll, so it bounds what is
-// stored but not the peak allocation while decoding — stdlib has no streaming
-// GIF decoder to stop earlier. Acceptable while nothing reaches this path:
-// Sanitize rejects GIFs, so only SanitizeAllowingGIF does, and its first
-// caller arrives with chat media in slice 10. Bound the spike properly there.
+// The frame budget is checked before decoding, not after: gif.DecodeAll
+// allocates every frame up front, so a file of thousands of tiny frames on a
+// large canvas costs hundreds of megabytes before any post-hoc check could
+// run. Counting frames from the block structure is a scan with no pixel
+// decoding at all, which is what makes the bound real rather than advisory.
+//
+// The file is still decoded afterwards, so something that merely claims to be
+// a GIF is rejected rather than stored.
 func sanitizeGIF(data []byte) (Sanitized, error) {
-	decoded, err := gif.DecodeAll(bytes.NewReader(data))
+	// DecodeConfig reads the header and the global colour table; it does not
+	// touch frame data, so it is safe to ask before the budget is known.
+	config, err := gif.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
+		return Sanitized{}, InvalidInputError{Message: "file is not a valid GIF"}
+	}
+
+	canvas := config.Width * config.Height
+	if canvas <= 0 {
 		return Sanitized{}, InvalidInputError{Message: "file is not a valid GIF"}
 	}
 
 	// Frame count multiplies the canvas: a 2 MB file of thousands of small
 	// frames decodes to hundreds of megabytes, which neither the size nor the
 	// dimension limit catches.
-	if frames := len(decoded.Image); frames*decoded.Config.Width*decoded.Config.Height > MaxDecodedPixels {
+	// Two bounds, because there are two shapes of bomb: a few frames on a huge
+	// canvas, and a great many frames on a tiny one. Neither bound catches the
+	// other's shape.
+	maxFrames := min(MaxGIFFrames, MaxDecodedPixels/canvas)
+	frames, err := gifFrameCount(data, maxFrames)
+	if err != nil {
+		return Sanitized{}, InvalidInputError{Message: "file is not a valid GIF"}
+	}
+	if frames > maxFrames {
 		return Sanitized{}, InvalidInputError{Message: "animation has too many frames for its size"}
+	}
+
+	decoded, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		return Sanitized{}, InvalidInputError{Message: "file is not a valid GIF"}
 	}
 
 	return Sanitized{
@@ -144,6 +179,96 @@ func sanitizeGIF(data []byte) (Sanitized, error) {
 		Width:       decoded.Config.Width,
 		Height:      decoded.Config.Height,
 	}, nil
+}
+
+// errMalformedGIF ends a scan that ran off the end of the data or hit a block
+// type GIF does not define.
+var errMalformedGIF = errors.New("media: malformed GIF")
+
+// gifFrameCount walks a GIF's block structure and counts image descriptors.
+//
+// Nothing is decoded: colour tables and compressed pixel data are stepped over
+// by their declared lengths. It stops as soon as the count passes limit, so a
+// decompression bomb costs a walk of the file rather than a decode of it. The
+// returned count is therefore only exact up to limit+1, which is all the
+// caller needs to decide.
+func gifFrameCount(data []byte, limit int) (int, error) {
+	// Header (6) plus logical screen descriptor (7).
+	const headerLen = 13
+	if len(data) < headerLen {
+		return 0, errMalformedGIF
+	}
+
+	at := headerLen
+	if packed := data[10]; packed&0x80 != 0 {
+		at += colourTableLen(packed)
+	}
+
+	frames := 0
+	for {
+		if at >= len(data) {
+			return 0, errMalformedGIF
+		}
+
+		switch data[at] {
+		case 0x3B: // trailer
+			return frames, nil
+
+		case 0x21: // extension: introducer, label, then data sub-blocks
+			var err error
+			if at, err = skipSubBlocks(data, at+2); err != nil {
+				return 0, err
+			}
+
+		case 0x2C: // image descriptor: separator plus nine bytes
+			frames++
+			if frames > limit {
+				return frames, nil
+			}
+			if at+10 > len(data) {
+				return 0, errMalformedGIF
+			}
+			local := data[at+9]
+			at += 10
+			if local&0x80 != 0 {
+				at += colourTableLen(local)
+			}
+			at++ // LZW minimum code size
+
+			var err error
+			if at, err = skipSubBlocks(data, at); err != nil {
+				return 0, err
+			}
+
+		default:
+			return 0, errMalformedGIF
+		}
+	}
+}
+
+// colourTableLen is the size in bytes of the table the packed field describes.
+func colourTableLen(packed byte) int {
+	return 3 << ((packed & 0x07) + 1)
+}
+
+// skipSubBlocks steps over a chain of length-prefixed blocks, returning where
+// it ends. Sub-block chains are how GIF stores both extension payloads and
+// compressed pixel data.
+func skipSubBlocks(data []byte, at int) (int, error) {
+	for {
+		if at >= len(data) {
+			return 0, errMalformedGIF
+		}
+		size := int(data[at])
+		at++
+		if size == 0 {
+			return at, nil
+		}
+		at += size
+		if at > len(data) {
+			return 0, errMalformedGIF
+		}
+	}
 }
 
 // sanitizeStill decodes, applies the EXIF orientation and re-encodes as JPEG.
