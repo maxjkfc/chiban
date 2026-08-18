@@ -806,9 +806,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     {message.meal_record_id ? (
                       // The card itself is the tap target for reacting, so
                       // opening the meal lives here rather than as a link
-                      // nested inside that button. Styled as a button rather
-                      // than rendered through one: Button's asChild path
-                      // passes Slot more than one child and throws.
+                      // nested inside that button. Styled through
+                      // buttonVariants, the same as the record links on the
+                      // Today page.
                       <Link
                         href={`/meals/${message.meal_record_id}`}
                         className={buttonVariants({
