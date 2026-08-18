@@ -41,6 +41,7 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
   // revocable, so the owner has to be able to see what they gave away.
   const [sharedWith, setSharedWith] = useState<string[] | null>(null);
   const [sharesFailed, setSharesFailed] = useState(false);
+  const [groupsFailed, setGroupsFailed] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
 
   useEffect(() => {
@@ -81,7 +82,9 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
 
     apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal })
       .then(setGroups)
-      .catch(() => {});
+      .catch(() => {
+        if (!controller.signal.aborted) setGroupsFailed(true);
+      });
 
     return () => controller.abort();
   }, [mealId]);
@@ -164,6 +167,19 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
       setBusy(false);
     }
   }
+
+  // The union of "groups I am in" and "groups this meal is shared with".
+  // Leaving a group does not revoke the shares you made into it, so a share
+  // can outlive the membership — and it still has to be visible and
+  // revocable, which a list built from memberships alone would hide.
+  const shareRows = [
+    ...new Set([...groups.map((group) => group.id), ...(sharedWith ?? [])]),
+  ].map((id) => ({
+    id,
+    name:
+      groups.find((group) => group.id === id)?.name ?? "某個群組（你已離開）",
+    shared: (sharedWith ?? []).includes(id),
+  }));
 
   if (!meal) {
     return (
@@ -270,37 +286,31 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
       {meal.is_owner ? (
         <section className="flex flex-col gap-2 border-t pt-5">
           <h2 className="text-sm font-medium">分享</h2>
-          {sharesFailed ? (
+          {sharesFailed || groupsFailed ? (
             <Message tone="error">
               無法載入分享狀態，重新整理後再試——在確定目前分享給誰之前，這裡不會顯示任何按鈕。
             </Message>
           ) : sharedWith === null ? (
             <p className="text-muted-foreground text-xs">載入中…</p>
-          ) : groups.length === 0 ? (
+          ) : shareRows.length === 0 ? (
             <p className="text-muted-foreground text-xs">
               還沒有加入任何群組，所以只有你看得到這一餐。
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {groups.map((group) => {
-                const shared = sharedWith.includes(group.id);
-                return (
-                  <li
-                    key={group.id}
-                    className="flex items-center gap-3 text-sm"
+              {shareRows.map((row) => (
+                <li key={row.id} className="flex items-center gap-3 text-sm">
+                  <span className="flex-1">{row.name}</span>
+                  <Button
+                    variant={row.shared ? "outline" : "default"}
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => handleToggleShare(row.id, row.shared)}
                   >
-                    <span className="flex-1">{group.name}</span>
-                    <Button
-                      variant={shared ? "outline" : "default"}
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => handleToggleShare(group.id, shared)}
-                    >
-                      {shared ? "取消分享" : "分享"}
-                    </Button>
-                  </li>
-                );
-              })}
+                    {row.shared ? "取消分享" : "分享"}
+                  </Button>
+                </li>
+              ))}
             </ul>
           )}
           <p className="text-muted-foreground text-xs">
