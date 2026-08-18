@@ -12,6 +12,7 @@ import {
   apiUrl,
   ApiRequestError,
   mealTypeLabel,
+  type Group,
   type Meal,
 } from "@/lib/api";
 
@@ -36,6 +37,10 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Which groups can currently see this meal. Sharing is meant to be
+  // revocable, so the owner has to be able to see what they gave away.
+  const [sharedWith, setSharedWith] = useState<string[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,6 +62,20 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
             : "讀取失敗，請重新整理",
         );
       });
+
+    // Both are owner-only and 404 for anyone else, so a failure here just
+    // means there is no sharing section to show.
+    Promise.all([
+      apiFetch<{ group_ids: string[] }>(`/api/v1/meals/${mealId}/shares`, {
+        signal: controller.signal,
+      }),
+      apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal }),
+    ])
+      .then(([shares, joined]) => {
+        setSharedWith(shares.group_ids);
+        setGroups(joined);
+      })
+      .catch(() => {});
 
     return () => controller.abort();
   }, [mealId]);
@@ -87,6 +106,23 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
           ? caught.message
           : "無法連線，請稍後再試",
       );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUnshare(groupID: string) {
+    setError(null);
+    setStatus(null);
+    setBusy(true);
+    try {
+      await apiFetch<void>(`/api/v1/meals/${mealId}/shares/${groupID}`, {
+        method: "DELETE",
+      });
+      setSharedWith((current) => current.filter((id) => id !== groupID));
+      setStatus("已取消分享");
+    } catch {
+      setError("取消分享失敗，請稍後再試");
     } finally {
       setBusy(false);
     }
@@ -207,6 +243,41 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
             儲存
           </Button>
         </form>
+      ) : null}
+
+      {/* Sharing has to be revocable from the product, not only from the API:
+          a meal shared by mistake is exactly the case this exists for. */}
+      {meal.is_owner ? (
+        <section className="flex flex-col gap-2 border-t pt-5">
+          <h2 className="text-sm font-medium">分享中的群組</h2>
+          {sharedWith.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              目前沒有分享給任何群組，只有你看得到。
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {sharedWith.map((groupID) => (
+                <li key={groupID} className="flex items-center gap-3 text-sm">
+                  <span className="flex-1">
+                    {groups.find((group) => group.id === groupID)?.name ??
+                      "某個群組"}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => handleUnshare(groupID)}
+                  >
+                    取消分享
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-muted-foreground text-xs">
+            取消後該群組就讀不到這一餐與它的照片，聊天室裡的留言會留著。
+          </p>
+        </section>
       ) : null}
 
       {meal.is_owner ? (

@@ -62,6 +62,12 @@ export default function RecordPage() {
   // Which groups this meal goes to. Sharing is explicit: nothing is published
   // to anyone unless it is ticked here.
   const [shareWith, setShareWith] = useState<string[]>([]);
+  // A share that did not go through, kept so the reader has something to
+  // retry rather than a message telling them to try again with no way to.
+  const [pendingShare, setPendingShare] = useState<{
+    mealID: string;
+    groupIDs: string[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -119,6 +125,24 @@ export default function RecordPage() {
     ]);
   }
 
+  async function handleRetryShare() {
+    if (!pendingShare) return;
+
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiFetch<void>(`/api/v1/meals/${pendingShare.mealID}/shares`, {
+        method: "POST",
+        body: { group_ids: pendingShare.groupIDs },
+      });
+      setPendingShare(null);
+    } catch {
+      setError("還是分享不出去，可以稍後從這一餐的頁面再試");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function removePhoto(index: number) {
     setPhotos((current) => {
       const removed = current[index];
@@ -160,6 +184,7 @@ export default function RecordPage() {
 
       // Shares are posted after the meal exists, never before: a card that
       // arrived first would point at a meal nobody could open yet.
+      let shareFailed = false;
       if (shareWith.length > 0) {
         try {
           await apiFetch<void>(`/api/v1/meals/${meal.id}/shares`, {
@@ -169,16 +194,22 @@ export default function RecordPage() {
         } catch {
           // The meal is safely recorded; only the sharing failed, and saying
           // so is more useful than implying the whole thing was lost.
-          setError("已記錄，但分享到群組失敗，可以稍後再試一次");
+          shareFailed = true;
+          setError("已記錄，但分享到群組失敗");
         }
       }
 
       setPublished(meal);
+      setPendingShare(
+        shareFailed ? { mealID: meal.id, groupIDs: shareWith } : null,
+      );
       for (const photo of photos) URL.revokeObjectURL(photo.previewUrl);
       setPhotos([]);
       setMealType("");
       setDescription("");
       // Sharing is decided per meal, so the next one starts private again.
+      // The failed selection is not lost: it moves to pendingShare, which is
+      // what the retry below re-sends.
       setShareWith([]);
     } catch (caught) {
       setError(
@@ -341,6 +372,15 @@ export default function RecordPage() {
       {published ? (
         <section className="flex flex-col gap-3 border-t pt-5">
           <Message tone="success">已記錄</Message>
+          {pendingShare ? (
+            <Button
+              variant="outline"
+              onClick={handleRetryShare}
+              loading={submitting}
+            >
+              重試分享到 {pendingShare.groupIDs.length} 個群組
+            </Button>
+          ) : null}
           <ul className="grid grid-cols-2 gap-2">
             {published.photo_ids.map((id) => (
               <li key={id}>

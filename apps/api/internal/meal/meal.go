@@ -255,8 +255,8 @@ func (s *Service) Delete(ctx context.Context, userID, mealID uuid.UUID) error {
 	return s.store.softDelete(ctx, mealID, userID, s.now())
 }
 
-// Get returns a meal the requester is allowed to see. In this slice that means
-// the owner; meal sharing widens it later, and every reader goes through here.
+// Get returns a meal the requester is allowed to see: its owner, or a member
+// of a group it is currently shared with. Every reader goes through here.
 func (s *Service) Get(ctx context.Context, userID, mealID uuid.UUID) (Meal, error) {
 	groupIDs, err := s.members.GroupIDsFor(ctx, userID)
 	if err != nil {

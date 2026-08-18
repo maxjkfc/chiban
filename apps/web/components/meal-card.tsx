@@ -24,7 +24,9 @@ type MealCardProps = {
  */
 export function MealCard({ mealId }: MealCardProps) {
   const [meal, setMeal] = useState<Meal | null>(null);
-  const [state, setState] = useState<"loading" | "shown" | "gone">("loading");
+  const [state, setState] = useState<"loading" | "shown" | "gone" | "failed">(
+    "loading",
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -35,7 +37,10 @@ export function MealCard({ mealId }: MealCardProps) {
         setState(found ? "shown" : "gone");
       })
       .catch(() => {
-        if (!controller.signal.aborted) setState("gone");
+        // fetchMeal already turns 404 into null, so reaching here means the
+        // request itself failed. Saying "deleted" would be a guess, and the
+        // wrong one on a flaky network.
+        if (!controller.signal.aborted) setState("failed");
       });
 
     return () => controller.abort();
@@ -47,6 +52,14 @@ export function MealCard({ mealId }: MealCardProps) {
         className="bg-muted h-32 w-56 animate-pulse rounded-2xl"
         aria-hidden
       />
+    );
+  }
+
+  if (state === "failed") {
+    return (
+      <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm">
+        飲食紀錄載入失敗
+      </p>
     );
   }
 
