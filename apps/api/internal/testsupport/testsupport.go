@@ -537,6 +537,7 @@ type Message struct {
 type ReplyTo struct {
 	ID      string `json:"id"`
 	UserID  string `json:"user_id"`
+	Type    string `json:"type"`
 	Content string `json:"content"`
 	Deleted bool   `json:"deleted"`
 }

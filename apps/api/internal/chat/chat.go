@@ -105,8 +105,12 @@ type Message struct {
 
 // ReplyPreview is as much of the parent as a quote needs.
 type ReplyPreview struct {
-	ID      uuid.UUID
-	UserID  uuid.UUID
+	ID     uuid.UUID
+	UserID uuid.UUID
+	// Type is what the parent was. Only a text message has content to quote;
+	// every other kind stores none, so without this a quote of one is an empty
+	// box and the reply reads as an answer to nothing.
+	Type    string
 	Content string
 	Deleted bool
 }

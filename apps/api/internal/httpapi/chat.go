@@ -56,8 +56,11 @@ type messageResponse struct {
 }
 
 type replyResponse struct {
-	ID      string `json:"id"`
-	UserID  string `json:"user_id"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// Type lets the client say what is being quoted when there is no text to
+	// quote — a picture, a sticker or a meal card all store empty content.
+	Type    string `json:"type"`
 	Content string `json:"content"`
 	Deleted bool   `json:"deleted"`
 }
@@ -136,6 +139,7 @@ func newMessageResponse(m chat.Message) messageResponse {
 		out.ReplyTo = &replyResponse{
 			ID:      m.ReplyTo.ID.String(),
 			UserID:  m.ReplyTo.UserID.String(),
+			Type:    m.ReplyTo.Type,
 			Content: m.ReplyTo.Content,
 			Deleted: m.ReplyTo.Deleted,
 		}

@@ -223,6 +223,9 @@ export type ChatMessage = {
 export type ReplyPreview = {
   id: string;
   user_id: string;
+  /** What the quoted message was. Only text carries content, so this is the
+   * whole preview for a picture, a sticker or a meal card. */
+  type: string;
   content: string;
   deleted: boolean;
 };

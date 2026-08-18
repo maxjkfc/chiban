@@ -184,6 +184,33 @@ type ChatRoomProps = {
   members: GroupMember[];
 };
 
+/**
+ * What a quote of a message reads as.
+ *
+ * Only a text message has anything to quote. A picture, a sticker and a meal
+ * card all store no content at all, so naming the kind is the entire preview —
+ * without it the quote is an empty box and the reply answers nothing.
+ */
+function quoteOf(parent: {
+  type: string;
+  content: string;
+  deleted?: boolean;
+}): string {
+  if (parent.deleted) return "（訊息已刪除）";
+  switch (parent.type) {
+    case "image":
+      return "圖片";
+    case "gif":
+      return "GIF";
+    case "sticker":
+      return "貼圖";
+    case "meal":
+      return "一餐的紀錄";
+    default:
+      return parent.content;
+  }
+}
+
 export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [before, setBefore] = useState<string | undefined>();
@@ -746,9 +773,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                       {nameOf(message.reply_to.user_id)}
                     </span>
                     <span className="ms-1 line-clamp-2">
-                      {message.reply_to.deleted
-                        ? "（訊息已刪除）"
-                        : message.reply_to.content}
+                      {quoteOf(message.reply_to)}
                     </span>
                   </blockquote>
                 ) : null}
@@ -947,7 +972,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             {nameOf(replyTo.user_id)}
           </span>
           <span className="text-muted-foreground line-clamp-1 flex-1">
-            {replyTo.content}
+            {quoteOf(replyTo)}
           </span>
           <Button
             variant="ghost"
