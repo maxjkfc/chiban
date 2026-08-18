@@ -28,9 +28,12 @@ type mealResponse struct {
 	// PhotoIDs are application-level IDs. Buckets and object names never leave
 	// the backend, so the frontend cannot depend on the storage layout.
 	PhotoIDs []string `json:"photo_ids"`
+	// IsOwner tells the reader whether editing is theirs to do. Sharing means
+	// people who cannot edit now read this same shape.
+	IsOwner bool `json:"is_owner"`
 }
 
-func newMealResponse(m meal.Meal, loc *time.Location) mealResponse {
+func newMealResponse(m meal.Meal, loc *time.Location, readerID uuid.UUID) mealResponse {
 	ids := make([]string, 0, len(m.Photos))
 	for _, p := range m.Photos {
 		ids = append(ids, p.ID.String())
@@ -42,6 +45,10 @@ func newMealResponse(m meal.Meal, loc *time.Location) mealResponse {
 		EatenAtLocal: m.EatenAt.In(loc).Format(meal.LocalTimeFormat),
 		Description:  m.Description,
 		PhotoIDs:     ids,
+		// Editing is the owner's alone. Saying so lets the client show a
+		// shared reader the meal without an edit form that would only ever
+		// fail; the server still refuses either way.
+		IsOwner: m.UserID == readerID,
 	}
 }
 
@@ -89,7 +96,7 @@ func createMealHandler(d Deps) http.HandlerFunc {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, newMealResponse(m, loc))
+		writeJSON(w, http.StatusCreated, newMealResponse(m, loc, userID))
 	}
 }
 
@@ -101,17 +108,22 @@ func getMealHandler(d Deps) http.HandlerFunc {
 		}
 
 		userID := auth.UserFromContext(r.Context()).ID
-		loc, ok := userLocation(w, r, d, userID)
-		if !ok {
-			return
-		}
-
 		m, err := d.Meal.Get(r.Context(), userID, mealID)
 		if err != nil {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, newMealResponse(m, loc))
+
+		// The owner's timezone, not the reader's. eaten_at_local is a fact
+		// about the owner's day — a lunch eaten at 12:30 in Taipei reads 12:30
+		// to everyone it is shared with, rather than shifting to each reader's
+		// clock. Before sharing existed the two were always the same person,
+		// which is what kept this hidden until now.
+		loc, ok := userLocation(w, r, d, m.UserID)
+		if !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, newMealResponse(m, loc, userID))
 	}
 }
 
@@ -160,7 +172,7 @@ func listMealsHandler(d Deps) http.HandlerFunc {
 
 		out := make([]mealResponse, 0, len(meals))
 		for _, m := range meals {
-			out = append(out, newMealResponse(m, loc))
+			out = append(out, newMealResponse(m, loc, userID))
 		}
 		writeJSON(w, http.StatusOK, mealDayResponse{Date: date.String(), Meals: out})
 	}
@@ -200,7 +212,7 @@ func patchMealHandler(d Deps) http.HandlerFunc {
 			writeMealError(w, d, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, newMealResponse(m, loc))
+		writeJSON(w, http.StatusOK, newMealResponse(m, loc, userID))
 	}
 }
 

@@ -281,11 +281,12 @@ func (s *store) insertMeal(ctx context.Context, groupID, userID, mealID uuid.UUI
 
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO chat_messages (group_id, user_id, message_type, client_message_id, meal_record_id)
-		SELECT $1, $2, 'meal', gen_random_uuid(), $3
-		WHERE NOT EXISTS (
-			SELECT 1 FROM chat_messages
-			WHERE group_id = $1 AND meal_record_id = $3 AND deleted_at IS NULL
-		)
+		VALUES ($1, $2, 'meal', gen_random_uuid(), $3)
+		-- Inference has to restate the partial index's predicate; a partial
+		-- unique index is not a constraint and cannot be named directly.
+		ON CONFLICT (group_id, meal_record_id)
+			WHERE meal_record_id IS NOT NULL AND deleted_at IS NULL
+		DO NOTHING
 		RETURNING id
 	`, groupID, userID, mealID).Scan(&id)
 	if err == nil {

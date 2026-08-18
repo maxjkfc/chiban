@@ -288,6 +288,9 @@ func (s *store) share(ctx context.Context, mealID, groupID uuid.UUID) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO meal_group_shares (meal_record_id, group_id)
 		VALUES ($1, $2)
+		-- shared_at deliberately keeps its original value across a
+		-- revoke-and-share-again cycle: it records when this group first got
+		-- the meal, which is what orders the share list.
 		ON CONFLICT (meal_record_id, group_id) DO UPDATE SET revoked_at = NULL
 	`, mealID, groupID)
 	if err != nil {

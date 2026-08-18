@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Message } from "@/components/ui/message";
-import { apiFetch, apiUrl, ApiRequestError, type Meal } from "@/lib/api";
+import {
+  apiFetch,
+  apiUrl,
+  ApiRequestError,
+  mealTypeLabel,
+  type Meal,
+} from "@/lib/api";
 
 const mealTypes = [
   { value: "", label: "不指定" },
@@ -76,7 +82,11 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
       setEatenAt(saved.eaten_at_local);
       setStatus("已儲存");
     } catch (caught) {
-      setError(caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試");
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
+      );
     } finally {
       setBusy(false);
     }
@@ -90,7 +100,11 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
       await apiFetch<void>(`/api/v1/meals/${mealId}`, { method: "DELETE" });
       router.replace("/today");
     } catch (caught) {
-      setError(caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試");
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
+      );
       setBusy(false);
     }
   }
@@ -120,74 +134,112 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
         ))}
       </ul>
 
+      {/* A shared meal is readable by the group but editable only by whoever
+          recorded it. Showing everyone the form would offer a save that the
+          API is always going to refuse. */}
+      {!meal.is_owner ? (
+        <dl className="flex flex-col gap-3">
+          <div className="flex gap-3 text-sm">
+            <dt className="text-muted-foreground w-20 shrink-0">用餐時間</dt>
+            <dd>{meal.eaten_at_local.replace("T", " ")}</dd>
+          </div>
+          {mealTypeLabel(meal.meal_type) ? (
+            <div className="flex gap-3 text-sm">
+              <dt className="text-muted-foreground w-20 shrink-0">餐別</dt>
+              <dd>{mealTypeLabel(meal.meal_type)}</dd>
+            </div>
+          ) : null}
+          {meal.description ? (
+            <div className="flex gap-3 text-sm">
+              <dt className="text-muted-foreground w-20 shrink-0">備註</dt>
+              <dd className="whitespace-pre-wrap">{meal.description}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
+
       {/* Photos are fixed once published: replacing them would need the same
           all-or-nothing upload handling as creating a meal, and nothing in
           V0.1 asks for it. */}
-      <form onSubmit={handleSave} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="eaten-at">用餐時間</Label>
-          <Input
-            id="eaten-at"
-            type="datetime-local"
-            required
-            value={eatenAt}
-            onChange={(event) => setEatenAt(event.target.value)}
-          />
-        </div>
+      {meal.is_owner ? (
+        <form onSubmit={handleSave} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="eaten-at">用餐時間</Label>
+            <Input
+              id="eaten-at"
+              type="datetime-local"
+              required
+              value={eatenAt}
+              onChange={(event) => setEatenAt(event.target.value)}
+            />
+          </div>
 
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="meal-type">餐別</Label>
-          <select
-            id="meal-type"
-            className="border-input bg-card h-11 rounded-2xl border px-4 text-sm"
-            value={mealType}
-            onChange={(event) => setMealType(event.target.value)}
-          >
-            {mealTypes.map((type) => (
-              <option key={type.value} value={type.value}>
-                {type.label}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="meal-type">餐別</Label>
+            <select
+              id="meal-type"
+              className="border-input bg-card h-11 rounded-2xl border px-4 text-sm"
+              value={mealType}
+              onChange={(event) => setMealType(event.target.value)}
+            >
+              {mealTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="description">備註</Label>
-          <Input
-            id="description"
-            maxLength={500}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="description">備註</Label>
+            <Input
+              id="description"
+              maxLength={500}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </div>
 
-        {error ? <Message tone="error">{error}</Message> : null}
-        {status ? <Message tone="success">{status}</Message> : null}
+          {error ? <Message tone="error">{error}</Message> : null}
+          {status ? <Message tone="success">{status}</Message> : null}
 
-        <Button type="submit" loading={busy}>
-          儲存
-        </Button>
-      </form>
-
-      <div className="flex flex-col gap-2 border-t pt-5">
-        {confirmingDelete ? (
-          <>
-            <Message tone="error">刪除後就不會出現在你的紀錄裡。</Message>
-            <div className="grid grid-cols-2 gap-3">
-              <Button variant="outline" onClick={() => setConfirmingDelete(false)}>
-                取消
-              </Button>
-              <Button variant="destructive" loading={busy} onClick={handleDelete}>
-                確認刪除
-              </Button>
-            </div>
-          </>
-        ) : (
-          <Button variant="destructive" onClick={() => setConfirmingDelete(true)}>
-            刪除這筆紀錄
+          <Button type="submit" loading={busy}>
+            儲存
           </Button>
-        )}
-      </div>
+        </form>
+      ) : null}
+
+      {meal.is_owner ? (
+        <div className="flex flex-col gap-2 border-t pt-5">
+          {confirmingDelete ? (
+            <>
+              <Message tone="error">刪除後就不會出現在你的紀錄裡。</Message>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="destructive"
+                  loading={busy}
+                  onClick={handleDelete}
+                >
+                  確認刪除
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Button
+              variant="destructive"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              刪除這筆紀錄
+            </Button>
+          )}
+        </div>
+      ) : null}
     </main>
   );
 }

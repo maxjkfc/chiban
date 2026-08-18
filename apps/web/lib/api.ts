@@ -142,6 +142,9 @@ export type Meal = {
   eaten_at_local: string;
   description?: string;
   photo_ids: string[];
+  /** Whether this reader may edit it. Sharing means people who cannot now
+   * read the same shape. */
+  is_owner: boolean;
 };
 
 /** "2026-03-15T12:30" to "12:30", for the compact list view. */

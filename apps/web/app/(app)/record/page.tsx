@@ -178,6 +178,8 @@ export default function RecordPage() {
       setPhotos([]);
       setMealType("");
       setDescription("");
+      // Sharing is decided per meal, so the next one starts private again.
+      setShareWith([]);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError

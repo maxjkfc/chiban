@@ -321,6 +321,7 @@ type Meal struct {
 	EatenAtLocal string   `json:"eaten_at_local"`
 	Description  string   `json:"description"`
 	PhotoIDs     []string `json:"photo_ids"`
+	IsOwner      bool     `json:"is_owner"`
 }
 
 // JPEG returns a small valid JPEG, for tests that need a real photo rather

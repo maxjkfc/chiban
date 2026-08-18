@@ -1,11 +1,12 @@
 "use client";
 
 import { SendHorizonalIcon, XIcon } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
 import { MealCard } from "@/components/meal-card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
 import {
@@ -683,6 +684,22 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     >
                       回覆
                     </Button>
+                    {message.meal_record_id ? (
+                      // The card itself is the tap target for reacting, so
+                      // opening the meal lives here rather than as a link
+                      // nested inside that button. Styled as a button rather
+                      // than rendered through one: Button's asChild path
+                      // passes Slot more than one child and throws.
+                      <Link
+                        href={`/meals/${message.meal_record_id}`}
+                        className={buttonVariants({
+                          variant: "ghost",
+                          size: "sm",
+                        })}
+                      >
+                        查看紀錄
+                      </Link>
+                    ) : null}
                     {mine ? (
                       <Button
                         variant="destructive"

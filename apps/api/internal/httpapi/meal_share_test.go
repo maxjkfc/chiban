@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/maxjkfc/chiban/apps/api/internal/testsupport"
 )
@@ -305,5 +306,45 @@ func TestResharingReopensAccessWithoutASecondCard(t *testing.T) {
 	app.SetSessionCookie(mei)
 	if page := app.History(group.ID, ""); len(page.Messages) != 1 {
 		t.Fatalf("the group has %d meal cards, want 1", len(page.Messages))
+	}
+}
+
+// A meal's wall-clock time belongs to whoever ate it. A lunch at 12:30 in
+// Taipei reads 12:30 to everyone it is shared with, rather than sliding to
+// each reader's own clock — before sharing existed, reader and owner were
+// always the same person, which is what kept this hidden.
+func TestASharedMealKeepsTheOwnersWallClockTime(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	invite := app.CreateInvite(group.ID)
+
+	// 04:30 UTC is 12:30 in Taipei and 23:30 the previous day in Denver.
+	eatenAt := time.Date(2026, 3, 15, 4, 30, 0, 0, time.UTC)
+	created := app.CreateMealAt(eatenAt, testsupport.JPEG(t, 400, 300))
+	app.ShareMeal(created.ID, group.ID)
+
+	if created.EatenAtLocal != "2026-03-15T12:30" {
+		t.Fatalf("owner sees %q, want %q", created.EatenAtLocal, "2026-03-15T12:30")
+	}
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.SaveProfile("阿凱", "America/Denver")
+	app.JoinGroup(invite.Code)
+
+	resp := app.ReadMeal(created.ID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("read shared meal = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var shared testsupport.Meal
+	app.DecodeJSON(resp, &shared)
+
+	if shared.EatenAtLocal != created.EatenAtLocal {
+		t.Fatalf("a reader in Denver sees %q, want the owner's %q",
+			shared.EatenAtLocal, created.EatenAtLocal)
+	}
+	if shared.IsOwner {
+		t.Fatal("a shared reader is marked as the owner")
 	}
 }

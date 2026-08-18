@@ -63,10 +63,7 @@ export function MealCard({ mealId }: MealCardProps) {
   const label = mealTypeLabel(meal.meal_type);
 
   return (
-    <a
-      href={`/meals/${meal.id}`}
-      className="bg-muted flex w-56 flex-col gap-2 overflow-hidden rounded-2xl p-2"
-    >
+    <div className="bg-muted flex w-56 flex-col gap-2 overflow-hidden rounded-2xl p-2">
       <div className="grid grid-cols-2 gap-1">
         {meal.photo_ids.slice(0, 4).map((id) => (
           // eslint-disable-next-line @next/next/no-img-element
@@ -89,6 +86,6 @@ export function MealCard({ mealId }: MealCardProps) {
       {meal.description ? (
         <p className="line-clamp-2 px-1 text-xs">{meal.description}</p>
       ) : null}
-    </a>
+    </div>
   );
 }

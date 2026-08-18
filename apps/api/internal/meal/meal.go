@@ -336,17 +336,21 @@ func (s *Service) Share(ctx context.Context, ownerID, mealID uuid.UUID, groupIDs
 		return err
 	}
 
+	// One lookup for the whole request, and every group checked before
+	// anything is written. Sharing into a group you are not in would hand your
+	// meal to strangers, and refusing halfway would leave the earlier groups
+	// already shared while the caller is told the request failed.
+	mine, err := s.members.GroupIDsFor(ctx, ownerID)
+	if err != nil {
+		return err
+	}
 	for _, groupID := range groupIDs {
-		// Sharing into a group you are not in would hand your meal to
-		// strangers, so membership is checked per group rather than assumed.
-		member, err := s.isMember(ctx, ownerID, groupID)
-		if err != nil {
-			return err
-		}
-		if !member {
+		if !slices.Contains(mine, groupID) {
 			return ErrNotMember
 		}
+	}
 
+	for _, groupID := range groupIDs {
 		if err := s.store.share(ctx, mealID, groupID); err != nil {
 			return err
 		}
@@ -376,12 +380,4 @@ func (s *Service) SharedWith(ctx context.Context, ownerID, mealID uuid.UUID) ([]
 		return nil, err
 	}
 	return s.store.sharedGroups(ctx, mealID)
-}
-
-func (s *Service) isMember(ctx context.Context, userID, groupID uuid.UUID) (bool, error) {
-	groupIDs, err := s.members.GroupIDsFor(ctx, userID)
-	if err != nil {
-		return false, err
-	}
-	return slices.Contains(groupIDs, groupID), nil
 }
