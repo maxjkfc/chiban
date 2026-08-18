@@ -19,8 +19,10 @@ import (
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
 )
 
-// Bucket is where stickers live. Clients never see this name.
-const Bucket = "stickers"
+// Bucket is where stickers live. Clients never see this name, but it has to
+// match the one the process provisions at startup — see the test that pins
+// every domain's bucket to config.Buckets.
+const Bucket = "user-stickers"
 
 // MaxPerUser bounds one person's library. A picker is only useful while you
 // can still find things in it, and an unbounded library is an unbounded upload
