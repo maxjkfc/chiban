@@ -91,7 +91,7 @@ export default function StickersPage() {
           <ChevronLeftIcon aria-hidden />
         </Link>
         <div className="flex flex-col gap-0.5">
-          <h1 className="text-2xl">我的貼圖</h1>
+          <h1 className="page-title-sub">我的貼圖</h1>
           <p className="text-muted-foreground text-xs">
             聊天室的快捷列從這裡挑。
           </p>

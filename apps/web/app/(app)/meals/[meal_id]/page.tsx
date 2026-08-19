@@ -200,7 +200,7 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
         <Button variant="outline" size="icon" onClick={() => router.back()} aria-label="回上一頁">
           <ChevronLeftIcon aria-hidden />
         </Button>
-        <h1 className="text-2xl">這一餐</h1>
+        <h1 className="page-title-sub">這一餐</h1>
       </header>
 
       <div className="polaroid relative -rotate-[1deg]">

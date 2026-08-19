@@ -80,6 +80,16 @@ export function StickerPicker({
     return () => controller.abort();
   }, []);
 
+  // Every close goes through here, so the sheet always opens on the library
+  // with nothing left over. The dialog's own onOpenChange is not enough: it
+  // fires for the closes the dialog initiates — escape, the overlay — but not
+  // for the one this component performs once a sticker has gone out.
+  function closeSheet() {
+    setEditing(false);
+    setSheetError(null);
+    onOpenChange(false);
+  }
+
   function load(signal?: AbortSignal) {
     setFailed(false);
     return apiFetch<Sticker[]>("/api/v1/me/stickers", { signal })
@@ -101,8 +111,11 @@ export function StickerPicker({
     if (sending) return;
     setSheetError(null);
     if (await onSend(stickerId)) {
-      onOpenChange(false);
-    } else {
+      closeSheet();
+    } else if (open) {
+      // Only when the tray is on screen. A rail tap fails with the sheet shut,
+      // and a message nobody can see would still be sitting there the next
+      // time it opens — the chat room reports that one where it happened.
       setSheetError("沒送出去，再試一次");
     }
   }
@@ -135,17 +148,23 @@ export function StickerPicker({
   }
 
   function toggleDraftPin(stickerId: string) {
+    // Decided here rather than inside the updater: React is free to run an
+    // updater more than once, and one that reports a full rail as a side
+    // effect would say so twice — or during a render.
+    if (
+      !draftPins.includes(stickerId) &&
+      draftPins.length >= MAX_STICKER_PINS
+    ) {
+      setSheetError(`快捷列只有 ${MAX_STICKER_PINS} 格，先拿掉一張`);
+      return;
+    }
+
     setSheetError(null);
-    setDraftPins((current) => {
-      if (current.includes(stickerId)) {
-        return current.filter((id) => id !== stickerId);
-      }
-      if (current.length >= MAX_STICKER_PINS) {
-        setSheetError(`快捷列只有 ${MAX_STICKER_PINS} 格，先拿掉一張`);
-        return current;
-      }
-      return [...current, stickerId];
-    });
+    setDraftPins((current) =>
+      current.includes(stickerId)
+        ? current.filter((id) => id !== stickerId)
+        : [...current, stickerId],
+    );
   }
 
   async function saveDraftPins() {
@@ -191,13 +210,7 @@ export function StickerPicker({
 
       <Dialog.Root
         open={open}
-        onOpenChange={(next) => {
-          onOpenChange(next);
-          if (!next) {
-            setEditing(false);
-            setSheetError(null);
-          }
-        }}
+        onOpenChange={(next) => (next ? onOpenChange(true) : closeSheet())}
       >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-[oklch(0.2_0.02_60_/_0.28)]" />
@@ -207,6 +220,13 @@ export function StickerPicker({
             <div className="grid h-4 place-items-center" aria-hidden>
               <span className="bg-input h-1 w-10 rounded-full" />
             </div>
+
+            {/* One tap sends, which is the thing a screen reader cannot infer
+                from the buttons alone — and the dialog needs a description
+                either way. */}
+            <Dialog.Description className="sr-only">
+              點一張貼圖就直接送出。也可以在這裡編輯鍵盤上方的快捷列。
+            </Dialog.Description>
 
             {editing ? (
               <>

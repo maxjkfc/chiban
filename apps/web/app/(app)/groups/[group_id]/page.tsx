@@ -127,9 +127,7 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
           <ChevronLeftIcon aria-hidden />
         </Link>
         <div className="flex flex-1 flex-col gap-0.5">
-          <h1 className="font-heading text-lg font-black">
-            {group?.name ?? "載入中…"}
-          </h1>
+          <h1 className="page-title-bar">{group?.name ?? "載入中…"}</h1>
           <p className="text-muted-foreground text-xs">{members.length} 人</p>
         </div>
         <Button

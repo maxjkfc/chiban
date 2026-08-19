@@ -140,7 +140,10 @@ func withCORS(origin string, next http.Handler) http.Handler {
 			w.Header().Add("Vary", "Origin")
 		}
 		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			// Every method the router registers has to be listed here. A route
+			// whose method is missing is refused by the browser at the preflight,
+			// which the API never sees and so can never log.
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.WriteHeader(http.StatusNoContent)
 			return

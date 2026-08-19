@@ -52,12 +52,14 @@ function pickerClassName(atLimit: boolean, variant?: "outline") {
  * which put the two-second decision after the commitment. It is five stickers
  * now — small enough to be free, close enough to be answered before publishing.
  *
- * Taking a photo and choosing one are deliberately two separate inputs. The
- * `capture` attribute asks the browser for a capture-type picker instead of a
- * file picker, so one input can offer the camera or the library but never
- * both; and with `capture` set a phone hands back exactly one photo, which
- * would put the 1-4 photo range out of reach on the device this product is
- * actually used on.
+ * The empty card offers the camera and the library as two separate inputs,
+ * because one input cannot be both: the `capture` attribute asks the browser
+ * for a capture-type picker, and a phone with it set hands back exactly one
+ * photo. Making it the only input would put the 1-4 photo range out of reach.
+ *
+ * Photos 2-4 go through the library input on the empty slots, which has no
+ * `capture` and so takes several at once. A phone's own sheet still offers the
+ * camera from there, so nothing is lost by not repeating the split.
  */
 export default function RecordPage() {
   const [photos, setPhotos] = useState<Picked[]>([]);

@@ -9,8 +9,13 @@ const variants = {
   // A line to write on, for the places the scrapbook wants handwriting rather
   // than a form: a meal note, a display name, a new group's name. The rule
   // sits at 27px so one line of 1rem text rests on it.
+  //
+  // `outline-solid` is not decoration: the shared classes below set
+  // `outline-none`, which in Tailwind v4 sets `--tw-outline-style: none`, and
+  // `outline-2` only sets a width against that variable. Without it the focus
+  // ring is 2px of nothing and a keyboard has no way to see where it is.
   ruled:
-    "ruled h-7 rounded-none border-0 bg-transparent px-0 leading-[1.6875rem] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring aria-invalid:text-destructive",
+    "ruled h-7 rounded-none border-0 bg-transparent px-0 leading-[1.6875rem] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring aria-invalid:text-destructive",
 } as const;
 
 function Input({

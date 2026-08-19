@@ -240,6 +240,20 @@
   );
 }
 
+/*
+ * A screen reached by a back button is not a tab, and its title should not
+ * shout like one. Two sizes, both still `h1` for the document outline:
+ * `page-title-sub` for a detail screen, `page-title-bar` for a compact bar
+ * that also carries a subtitle. Anything else uses the global `h1`.
+ */
+@utility page-title-sub {
+  @apply font-heading text-2xl leading-tight font-black tracking-tight;
+}
+
+@utility page-title-bar {
+  @apply font-heading text-lg leading-tight font-black;
+}
+
 /* A plain surface for lists and settings — no tape, no tilt. */
 @utility card-surface {
   @apply bg-card rounded-lg border p-4 shadow-pop;

@@ -78,10 +78,14 @@ v0.1 是暖色調的表單：四頁同一個骨架（`h1` + 直排欄位 + 全�
 
 | 用途 | 尺寸 |
 |---|---|
-| `h1` | 1.9rem / `font-black` / serif（全域，不要再加 `text-2xl`） |
+| 分頁標題（今日 / 記錄 / 群組 / 我的） | `h1` 1.9rem / `font-black` / serif（全域，不要再蓋掉） |
+| 次級頁標題（有返回鍵：這一餐、我的貼圖） | `h1.page-title-sub` 1.5rem |
+| 緊湊列標題（有副標：群組聊天） | `h1.page-title-bar` 1.125rem |
 | `h2`、餐別、群組名 | `font-heading font-black`，0.95–1.05rem |
 | 內文 | `text-sm` |
 | 輔助 | `text-xs`（最小；不要更小） |
+
+返回鍵進來的畫面不是分頁，標題不該吼得一樣大。所以有兩個具名的例外，**都還是 `h1`**（文件大綱要正確）。除了這兩個 utility，不要自己在 `h1` 上加字級——`text-2xl` 這種寫法會在下次改全域字級時默默脫隊。
 
 ### 其他
 
@@ -175,7 +179,7 @@ v0.1 是暖色調的表單：四頁同一個骨架（`h1` + 直排欄位 + 全�
 |---|---|
 | 用語意 token（`bg-primary`、`text-primary-ink`） | 寫死 hex、oklch、`bg-[#ff6b35]` |
 | 紙上的珊瑚字用 `text-primary-ink` | 用 `text-primary`（底色）當文字 |
-| `<h1>標題</h1>` | `<h1 className="text-2xl font-semibold">` — 會蓋掉全域字級 |
+| `<h1>標題</h1>`、或 `page-title-sub` / `page-title-bar` | `<h1 className="text-2xl font-semibold">` — 自己蓋全域字級 |
 | 卡片用 `tiltClass(index)` | 用 `Math.random()` 決定角度 |
 | 錯誤用 `<Message tone="error">` | 自己拼 `text-destructive text-sm` |
 | 照片至少 118px | 為了塞更多筆而縮成縮圖格 |
