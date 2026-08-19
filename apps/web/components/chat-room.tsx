@@ -212,6 +212,12 @@ function quoteOf(parent: {
 }
 
 export function ChatRoom({ groupId, members }: ChatRoomProps) {
+  // Held in state, not read straight from the prop: the list is fetched once
+  // when the page loads, and someone invited a minute ago is not on it. Their
+  // first message is exactly when their name is needed.
+  const [roster, setRoster] = useState(members);
+  // Ids already looked up, so an unresolvable one is asked about only once.
+  const asked = useRef(new Set<string>());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [before, setBefore] = useState<string | undefined>();
   const [me, setMe] = useState<User | null>(null);
@@ -442,6 +448,38 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [newest]);
+
+  // Someone who joined after this page loaded is not on the roster, so their
+  // first message would be drawn as an anonymous stranger until a reload. That
+  // is the ordinary case of inviting a friend and watching them arrive, so the
+  // list is refetched the moment a name is actually missing rather than polled
+  // on a timer.
+  useEffect(() => {
+    const known = new Set(roster.map((member) => member.user_id));
+    const missing = messages
+      .flatMap((message) => [message.user_id, message.reply_to?.user_id])
+      .filter(
+        (id): id is string => !!id && !known.has(id) && !asked.current.has(id),
+      );
+    if (missing.length === 0) return;
+
+    // Remembered before the request, not after: someone who has left the group
+    // will never appear in the list, and without this every new message would
+    // send another lookup for them.
+    for (const id of missing) asked.current.add(id);
+
+    const controller = new AbortController();
+    apiFetch<GroupMember[]>(`/api/v1/groups/${groupId}/members`, {
+      signal: controller.signal,
+    })
+      .then(setRoster)
+      .catch(() => {
+        // A name is a nicety. Failing to get one leaves the fallback in place
+        // rather than interrupting the conversation with an error.
+      });
+
+    return () => controller.abort();
+  }, [messages, roster, groupId]);
 
   async function handleSend(event: React.SyntheticEvent) {
     event.preventDefault();
@@ -706,7 +744,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     }
   }
 
-  const senders = new Map(members.map((member) => [member.user_id, member]));
+  const senders = new Map(roster.map((member) => [member.user_id, member]));
 
   function nameOf(userId: string): string {
     return senders.get(userId)?.display_name || "這位成員";
