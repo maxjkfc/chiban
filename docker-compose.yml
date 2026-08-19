@@ -19,7 +19,12 @@ services:
 
   fake-gcs:
     image: fsouza/fake-gcs-server:1.52
-    command: ["-scheme", "http", "-port", "4443", "-backend", "filesystem", "-data", "/data"]
+    # -filesystem-root, not -data. `-data` only says where to LOAD existing
+    # data from at startup; writes go to -filesystem-root, which defaults to
+    # /storage. Pointing the volume at /data therefore persisted nothing and
+    # every upload lived in the container's writable layer until it was
+    # recreated.
+    command: ["-scheme", "http", "-port", "4443", "-backend", "filesystem", "-filesystem-root", "/data"]
     ports:
       # Loopback only: fake-gcs has no authentication of its own.
       - "127.0.0.1:${FAKE_GCS_PORT:-14443}:4443"
