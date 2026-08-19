@@ -1,0 +1,19 @@
+# Which hostname reaches what. This is the whole routing table for public
+# traffic, and it lives here rather than in the Cloudflare dashboard so that it
+# is reviewed, diffed and rebuilt like the rest of the deployment.
+#
+# `http://` is deliberate: Cloudflare terminates TLS, and this hop runs inside
+# the compose network. Asking for https here would make cloudflared attempt a
+# TLS handshake against Caddy's plain listener and every request would 502.
+#
+# Written by scripts/setup-tunnel.sh. The credentials JSON named below is the
+# key to the tunnel and is never committed.
+tunnel: 54d41752-f557-45b4-b62a-df5fc49cd1fb
+credentials-file: /etc/cloudflared/54d41752-f557-45b4-b62a-df5fc49cd1fb.json
+
+ingress:
+  - hostname: chiban.maxjkfc.com
+    service: http://caddy:80
+  # Anything addressed to this tunnel that is not the hostname above is not
+  # part of this product and gets nothing.
+  - service: http_status:404

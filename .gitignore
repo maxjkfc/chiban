@@ -16,3 +16,8 @@ next-env.d.ts
 
 # Local backups
 /backups/
+
+# Cloudflare Tunnel credentials. The tunnel's own config.yml is committed —
+# the routing belongs in review — but the JSON beside it is the key to the
+# tunnel and must never be.
+deploy/cloudflared/*.json
