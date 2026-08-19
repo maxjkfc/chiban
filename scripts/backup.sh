@@ -13,9 +13,21 @@
 #   0 4 * * *  cd /Users/you/code/chiban && scripts/backup.sh /Volumes/Backup/chiban >> /tmp/chiban-backup.log 2>&1
 #
 # Restore with scripts/restore.sh.
+#
+# Known limitation: the database and the objects are not one snapshot. The dump
+# is taken first and the objects a moment later, with the API still writable in
+# between, so a picture replaced during that window can leave the restored
+# database pointing at an object the archive does not have. Nothing in V0.1
+# rewrites an object except replacing an avatar, and a nightly run at 4am is
+# unlikely to catch one, so this is accepted rather than solved — solving it
+# means stopping the API for the length of every backup.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+# Acts on whichever compose project this directory resolves to. With several
+# stacks sharing this checkout, export COMPOSE_PROJECT_NAME deliberately —
+# nothing here will notice it pointing somewhere unexpected.
 
 DEST_ROOT=${1:-${CHIBAN_BACKUP_DIR:-./backups}}
 # How many days of backups to keep. A daily job with the default keeps a
@@ -74,27 +86,53 @@ docker run --rm \
 	-v "$(cd "$dest" && pwd):/backup" \
 	alpine:3 tar czf /backup/objects.tar.gz -C /data . || fail "tar of the object volume"
 
+# Read the archive end to end before counting anything in it. A truncated
+# archive still lists the entries it managed to write, so counting without
+# reading first turns "half a backup" into a number that looks healthy.
+docker run --rm -v "$(cd "$dest" && pwd):/backup:ro" \
+	alpine:3 tar tzf /backup/objects.tar.gz > /dev/null ||
+	fail "the object archive is truncated or corrupt"
+
 # An empty tar.gz is about 45 bytes, so a size check alone calls a backup of
-# nothing a success. Ask the database whether there should have been anything:
-# rows without objects is the shape of a storage path that is not persisting
-# where it is being backed up from, which is worth failing the whole job over.
+# nothing a success. Ask the database how many objects there should be: fewer
+# files than rows is the shape of a storage path that is not persisting where
+# it is being backed up from, which is worth failing the whole job over.
+#
+# Every bucket has to be counted. Avatars live on profiles rather than in a
+# table of their own, and leaving them out means an install whose only media
+# is avatars — a brand new one — would pass this check with an empty archive.
 stored=$(docker compose exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -tAc "
 	SELECT (SELECT count(*) FROM meal_photos)
 	     + (SELECT count(*) FROM chat_media)
-	     + (SELECT count(*) FROM user_stickers);" | tr -d '[:space:]')
+	     + (SELECT count(*) FROM user_stickers)
+	     + (SELECT count(*) FROM profiles WHERE avatar_object_name IS NOT NULL);" |
+	tr -d '[:space:]')
+# `grep -c` exits 1 when the count is zero, which under `set -e` would kill
+# the script here — on an empty archive, the one case this comparison exists
+# to catch. The archive itself was already read end to end above, so nothing
+# is being hidden by swallowing this status.
 archived=$(docker run --rm -v "$(cd "$dest" && pwd):/backup:ro" \
-	alpine:3 sh -c 'tar tzf /backup/objects.tar.gz | grep -vc "/$"' || true)
+	alpine:3 sh -c 'tar tzf /backup/objects.tar.gz | grep -vc "/$" || true')
 
-if [ "${stored:-0}" -gt 0 ] && [ "${archived:-0}" -eq 0 ]; then
-	fail "the database has $stored stored objects but the archive has none — \
-the object volume is not where the objects are being written"
+# Compared, not just checked for zero: a bucket that stopped persisting while
+# the others kept working leaves a non-empty archive that is still missing
+# things. Extra files are expected and fine — deleted rows keep their objects,
+# and fake-gcs writes a metadata file per bucket.
+if [ "${archived:-0}" -lt "${stored:-0}" ]; then
+	fail "the database has $stored stored objects but the archive holds only $archived files"
 fi
 
 # --- prune ----------------------------------------------------------------
-# Only ever removes whole finished backups, and only from this root.
-find "$DEST_ROOT" -mindepth 1 -maxdepth 1 -type d -name '20*' \
-	-mtime +"$KEEP_DAYS" -exec rm -rf {} + 2>/dev/null || true
+# Only ever removes whole finished backups, and only from this root. The name
+# is not enough on its own: "20*" also matches 2019-tax-returns, and an
+# external disk is exactly where a directory like that lives. A backup is
+# identified by containing a dump, which nothing else does by accident.
+find "$DEST_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" 2>/dev/null |
+	while IFS= read -r old; do
+		[ -f "$old/database.dump" ] || continue
+		rm -rf "$old"
+	done
 
 echo "backup complete: $dest"
 du -sh "$dest" | awk '{print "  size: " $1}'
-awk 'END {print "  tables in dump: " NR}' "$dest/database.toc"
+echo "  tables in dump: $(grep -c 'TABLE DATA' "$dest/database.toc")"

@@ -468,17 +468,17 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     // send another lookup for them.
     for (const id of missing) asked.current.add(id);
 
-    const controller = new AbortController();
-    apiFetch<GroupMember[]>(`/api/v1/groups/${groupId}/members`, {
-      signal: controller.signal,
-    })
+    // Deliberately not aborted when this effect re-runs. The next message
+    // arriving is not a reason to give up on the lookup it started — and
+    // because the id is already in `asked`, the run that replaces this one
+    // finds nothing missing and would not start a replacement. Cancelling
+    // here means the name never resolves at all.
+    apiFetch<GroupMember[]>(`/api/v1/groups/${groupId}/members`)
       .then(setRoster)
       .catch(() => {
         // A name is a nicety. Failing to get one leaves the fallback in place
         // rather than interrupting the conversation with an error.
       });
-
-    return () => controller.abort();
   }, [messages, roster, groupId]);
 
   async function handleSend(event: React.SyntheticEvent) {
