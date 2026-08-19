@@ -1,6 +1,6 @@
 "use client";
 
-import { TrashIcon, UploadIcon } from "lucide-react";
+import { ChevronLeftIcon, StarIcon, TrashIcon, UploadIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -81,13 +81,22 @@ export default function StickersPage() {
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-5 p-6">
-      <div className="flex flex-col gap-1">
-        <h1>我的貼圖</h1>
-        <p className="text-muted-foreground text-xs">
-          在聊天室的貼圖按鈕裡就能用。
-        </p>
-      </div>
+    <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
+      <header className="flex items-center gap-3">
+        <Link
+          href="/profile"
+          aria-label="回到「我的」"
+          className={buttonVariants({ variant: "outline", size: "icon" })}
+        >
+          <ChevronLeftIcon aria-hidden />
+        </Link>
+        <div className="flex flex-col gap-0.5">
+          <h1 className="text-2xl">我的貼圖</h1>
+          <p className="text-muted-foreground text-xs">
+            聊天室的快捷列從這裡挑。
+          </p>
+        </div>
+      </header>
 
       {/* A label, so the browser opens the picker itself. */}
       <label
@@ -125,19 +134,25 @@ export default function StickersPage() {
       ) : (
         <ul className="grid grid-cols-3 gap-3">
           {stickers.map((sticker) => (
-            <li key={sticker.id} className="relative">
+            <li key={sticker.id} className="bg-card border-border relative rounded-md border p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={stickerUrl(sticker.id)}
                 alt="貼圖"
                 className="aspect-square w-full object-contain"
               />
+              {sticker.pin_order ? (
+                <span className="bg-primary text-primary-foreground absolute -top-2 -left-2 grid size-6 place-items-center rounded-full">
+                  <StarIcon className="size-3 fill-current" aria-hidden />
+                  <span className="sr-only">在快捷列第 {sticker.pin_order} 格</span>
+                </span>
+              ) : null}
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => handleDelete(sticker.id)}
                 aria-label="刪除這個貼圖"
-                className="bg-background/90 absolute -top-1.5 -right-1.5 rounded-full border p-1.5 disabled:opacity-50"
+                className="bg-card text-muted-foreground absolute -top-2 -right-2 rounded-full border p-1.5 disabled:opacity-50"
               >
                 <TrashIcon className="size-3.5" aria-hidden />
               </button>
@@ -146,9 +161,6 @@ export default function StickersPage() {
         </ul>
       )}
 
-      <Link href="/profile" className="text-muted-foreground text-xs underline">
-        回到「我的」
-      </Link>
     </main>
   );
 }

@@ -914,6 +914,8 @@ func (a *App) ReadChatMedia(mediaID string) *http.Response {
 type Sticker struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
+	// PinOrder is the quick-rail slot, or zero when the sticker is not pinned.
+	PinOrder int `json:"pin_order"`
 }
 
 // PostSticker uploads one sticker and returns the raw response, so tests can
@@ -970,6 +972,35 @@ func (a *App) ListStickers() []Sticker {
 	resp := a.Request(http.MethodGet, "/api/v1/me/stickers", nil)
 	if resp.StatusCode != http.StatusOK {
 		a.t.Fatalf("list stickers: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var stickers []Sticker
+	a.DecodeJSON(resp, &stickers)
+	return stickers
+}
+
+// PutStickerPins replaces the caller's quick rail and returns the raw
+// response, so tests can assert on rejections as well as successes.
+func (a *App) PutStickerPins(stickerIDs ...string) *http.Response {
+	a.t.Helper()
+
+	// A nil slice would marshal as null; the rail is always a list, and an
+	// empty one is the meaningful "clear it" request.
+	if stickerIDs == nil {
+		stickerIDs = []string{}
+	}
+	return a.Request(http.MethodPut, "/api/v1/me/sticker-pins",
+		map[string]any{"sticker_ids": stickerIDs})
+}
+
+// PinStickers sets the quick rail and fails the test unless it was accepted,
+// returning the library the API answers with.
+func (a *App) PinStickers(stickerIDs ...string) []Sticker {
+	a.t.Helper()
+
+	resp := a.PutStickerPins(stickerIDs...)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("pin stickers: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	var stickers []Sticker

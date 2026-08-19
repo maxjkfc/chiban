@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/maxjkfc/chiban/apps/api/internal/auth"
 	"github.com/maxjkfc/chiban/apps/api/internal/media"
 	"github.com/maxjkfc/chiban/apps/api/internal/sticker"
@@ -16,6 +18,25 @@ type stickerResponse struct {
 	// Type is "image" or "gif". The client needs it only to know that a GIF
 	// will animate; both are rendered the same way.
 	Type string `json:"type"`
+	// PinOrder is the slot on the owner's quick rail, 1 to sticker.MaxPins.
+	// Omitted when the sticker is not pinned, so "not on the rail" is the
+	// absence of a slot rather than a zero the client has to interpret.
+	PinOrder int `json:"pin_order,omitempty"`
+}
+
+type setStickerPinsRequest struct {
+	// Ordered: the first id is the leftmost slot on the rail.
+	StickerIDs []string `json:"sticker_ids"`
+}
+
+func stickerResponses(stickers []sticker.Sticker) []stickerResponse {
+	out := make([]stickerResponse, 0, len(stickers))
+	for _, one := range stickers {
+		out = append(out, stickerResponse{
+			ID: one.ID.String(), Type: one.Type, PinOrder: one.PinOrder,
+		})
+	}
+	return out
 }
 
 func addStickerHandler(d Deps) http.HandlerFunc {
@@ -65,11 +86,43 @@ func listStickersHandler(d Deps) http.HandlerFunc {
 			return
 		}
 
-		out := make([]stickerResponse, 0, len(stickers))
-		for _, one := range stickers {
-			out = append(out, stickerResponse{ID: one.ID.String(), Type: one.Type})
+		writeJSON(w, http.StatusOK, stickerResponses(stickers))
+	}
+}
+
+// setStickerPinsHandler replaces the caller's quick rail and answers with the
+// library, so the picker that just saved does not need a second round trip to
+// redraw itself.
+func setStickerPinsHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req setStickerPinsRequest
+		if !decodeJSON(w, r, &req) {
+			return
 		}
-		writeJSON(w, http.StatusOK, out)
+
+		stickerIDs := make([]uuid.UUID, 0, len(req.StickerIDs))
+		for _, raw := range req.StickerIDs {
+			parsed, err := uuid.Parse(raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest,
+					"sticker_ids must be UUIDs", "sticker_ids")
+				return
+			}
+			stickerIDs = append(stickerIDs, parsed)
+		}
+
+		userID := auth.UserFromContext(r.Context()).ID
+		if err := d.Sticker.SetPins(r.Context(), userID, stickerIDs); err != nil {
+			writeStickerError(w, d, err)
+			return
+		}
+
+		stickers, err := d.Sticker.List(r.Context(), userID)
+		if err != nil {
+			writeStickerError(w, d, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, stickerResponses(stickers))
 	}
 }
 

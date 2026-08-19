@@ -51,7 +51,15 @@ type Viewership interface {
 type Sticker struct {
 	ID   uuid.UUID
 	Type string
+	// PinOrder is the slot this sticker holds on the owner's quick rail,
+	// 1 to MaxPins, or zero when it is not pinned.
+	PinOrder int
 }
+
+// MaxPins is how many stickers fit on the chat composer's quick rail. Four is
+// what fits beside the "all stickers" tile on a phone without scrolling, and a
+// rail you have to scroll is not a shortcut.
+const MaxPins = 4
 
 type Service struct {
 	store   *store
@@ -107,11 +115,42 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Sticker, error)
 	return s.store.listForOwner(ctx, userID)
 }
 
+// SetPins replaces the owner's quick rail with the given stickers, in order.
+//
+// An empty list clears the rail, which is how someone goes back to the default
+// of "the four most recent" without having to pick four they do not want.
+func (s *Service) SetPins(ctx context.Context, userID uuid.UUID, stickerIDs []uuid.UUID) error {
+	if len(stickerIDs) > MaxPins {
+		return InvalidInputError{
+			Field:   "sticker_ids",
+			Message: fmt.Sprintf("at most %d stickers can be pinned", MaxPins),
+		}
+	}
+
+	// Checked here rather than left to the unique index: a repeat is the
+	// caller's mistake to fix, and the index would report it as a conflict
+	// with no indication of which id was doubled.
+	seen := make(map[uuid.UUID]struct{}, len(stickerIDs))
+	for _, id := range stickerIDs {
+		if _, repeated := seen[id]; repeated {
+			return InvalidInputError{
+				Field:   "sticker_ids",
+				Message: "the same sticker cannot be pinned twice",
+			}
+		}
+		seen[id] = struct{}{}
+	}
+
+	return s.store.setPins(ctx, userID, stickerIDs)
+}
+
 // Remove takes a sticker out of its owner's library.
 //
 // Only the owner can, and it is a soft delete: messages already sent with this
 // sticker keep rendering it. Deleting is for tidying the picker, not for
-// retracting what was already said.
+// retracting what was already said. It also gives up whatever quick-rail slot
+// the sticker held, so the rail never points at something the picker no
+// longer offers.
 func (s *Service) Remove(ctx context.Context, userID, stickerID uuid.UUID) error {
 	return s.store.softDelete(ctx, stickerID, userID)
 }

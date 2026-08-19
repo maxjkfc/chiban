@@ -293,7 +293,27 @@ export function stickerUrl(stickerId: string): string {
 export type Sticker = {
   id: string;
   type: "image" | "gif";
+  /**
+   * Which quick-rail slot this sticker holds, 1 to MAX_STICKER_PINS. Absent
+   * when it is not pinned — the API omits the field rather than sending a zero.
+   */
+  pin_order?: number;
 };
+
+/** How many stickers fit on the chat composer's quick rail. Mirrors the API. */
+export const MAX_STICKER_PINS = 4;
+
+/**
+ * Replaces the caller's quick rail, in order, and returns the whole library
+ * as the server now sees it — so the picker that saved does not need a second
+ * request to redraw.
+ */
+export function setStickerPins(stickerIds: string[]): Promise<Sticker[]> {
+  return apiFetch<Sticker[]>("/api/v1/me/sticker-pins", {
+    method: "PUT",
+    body: { sticker_ids: stickerIds },
+  });
+}
 
 /** Adds one sticker to the caller's own library. */
 export async function uploadSticker(file: File): Promise<Sticker> {

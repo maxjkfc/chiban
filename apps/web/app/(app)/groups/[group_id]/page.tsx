@@ -1,10 +1,12 @@
 "use client";
 
+import { ChevronLeftIcon, MessageCircleIcon, UsersIcon } from "lucide-react";
+import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
 import { ChatRoom } from "@/components/chat-room";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
 import {
@@ -116,15 +118,28 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex items-center gap-3 border-b p-4">
-        <h1 className="flex-1 text-lg">{group?.name ?? "載入中…"}</h1>
+      <header className="bg-background/92 border-border flex items-center gap-3 border-b px-4 py-3 backdrop-blur">
+        <Link
+          href="/groups"
+          aria-label="回到群組"
+          className={buttonVariants({ variant: "outline", size: "icon" })}
+        >
+          <ChevronLeftIcon aria-hidden />
+        </Link>
+        <div className="flex flex-1 flex-col gap-0.5">
+          <h1 className="font-heading text-lg font-black">
+            {group?.name ?? "載入中…"}
+          </h1>
+          <p className="text-muted-foreground text-xs">{members.length} 人</p>
+        </div>
         <Button
-          variant="outline"
-          size="sm"
+          variant={showDetails ? "secondary" : "outline"}
+          size="icon"
           aria-expanded={showDetails}
+          aria-label={showDetails ? "回到聊天" : "成員與邀請"}
           onClick={() => setShowDetails((shown) => !shown)}
         >
-          {showDetails ? "回到聊天" : "成員與邀請"}
+          {showDetails ? <MessageCircleIcon aria-hidden /> : <UsersIcon aria-hidden />}
         </Button>
       </header>
 
@@ -135,9 +150,9 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
         // this one's refs and in-flight requests under a new id.
         <ChatRoom key={groupId} groupId={groupId} members={members} />
       ) : (
-        <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6">
-          <section className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium">成員</h2>
+        <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-6">
+          <section className="card-surface flex flex-col gap-3">
+            <h2 className="text-muted-foreground text-xs tracking-[0.06em]">成員</h2>
             <ul className="flex flex-col gap-1">
               {members.map((member) => (
                 <li
@@ -163,8 +178,8 @@ export default function GroupPage({ params }: PageProps<"/groups/[group_id]">) {
             </ul>
           </section>
 
-          <section className="flex flex-col gap-3 border-t pt-6">
-            <h2 className="text-sm font-medium">邀請朋友</h2>
+          <section className="card-surface flex flex-col gap-3">
+            <h2 className="text-muted-foreground text-xs tracking-[0.06em]">邀請朋友</h2>
             <p className="text-muted-foreground text-xs">
               連結 7 天內有效，可以給多個人使用。
             </p>

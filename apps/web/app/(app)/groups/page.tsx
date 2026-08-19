@@ -1,13 +1,16 @@
 "use client";
 
+import { ChevronRightIcon, PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Group } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -51,8 +54,13 @@ export default function GroupsPage() {
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6">
-      <h1>群組</h1>
+    <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
+      <header className="flex flex-col gap-1">
+        <h1>群組</h1>
+        <p className="text-muted-foreground text-sm">
+          只有被邀請的人看得到裡面的餐。
+        </p>
+      </header>
 
       {groups === null ? (
         <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
@@ -61,35 +69,47 @@ export default function GroupsPage() {
           還沒有群組。建立一個，再把邀請連結傳給朋友。
         </p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {groups.map((group) => (
+        <ul className="flex flex-col gap-4">
+          {groups.map((group, index) => (
             <li key={group.id}>
+              {/* An index card with a strip of tape, not a table row: the
+                  group is a place you go, and it should look like an object. */}
               <Link
                 href={`/groups/${group.id}`}
-                className="card-surface flex items-center justify-between font-semibold"
+                className={cn(
+                  "polaroid relative flex items-center gap-3 p-4 transition-transform active:scale-[0.99]",
+                  tiltClass(index),
+                )}
               >
-                <span>{group.name}</span>
+                <Tape tone={tapeTone(index)} className={tapePlacement(index)} />
+                <span className="font-heading flex-1 text-lg font-black">
+                  {group.name}
+                </span>
                 {group.is_owner ? (
-                  <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs">
+                  <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs font-bold">
                     管理者
                   </span>
                 ) : null}
+                <ChevronRightIcon
+                  className="text-muted-foreground size-4"
+                  aria-hidden
+                />
               </Link>
             </li>
           ))}
         </ul>
       )}
 
-      <form
-        onSubmit={handleCreate}
-        className="flex flex-col gap-3 border-t pt-6"
-      >
-        <Label htmlFor="group-name">建立群組</Label>
+      <form onSubmit={handleCreate} className="card-surface flex flex-col gap-3">
+        <Label htmlFor="group-name" className="text-muted-foreground text-xs tracking-[0.06em]">
+          開一個新的
+        </Label>
         <Input
           id="group-name"
+          variant="ruled"
           required
           maxLength={50}
-          placeholder="例如：午餐團"
+          placeholder="例如：週五宵夜"
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
@@ -97,7 +117,8 @@ export default function GroupsPage() {
           <Message tone="error">{error}</Message>
         ) : null}
         <Button type="submit" loading={submitting}>
-          {submitting ? "建立中…" : "建立"}
+          <PlusIcon aria-hidden />
+          {submitting ? "建立中…" : "建立群組"}
         </Button>
       </form>
     </main>
