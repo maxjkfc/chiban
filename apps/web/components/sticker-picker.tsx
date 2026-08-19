@@ -316,7 +316,7 @@ export function StickerPicker({
                       ))}
                     </ul>
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       className="ml-auto shrink-0"
                       onClick={startEditing}
                     >

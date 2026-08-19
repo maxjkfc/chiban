@@ -22,6 +22,11 @@ const items = [
 export function BottomNav() {
   const pathname = usePathname();
 
+  // A conversation takes the whole screen. Leaving the nav here stacked three
+  // bars at the bottom — quick rail, composer, nav — and pushed the newest
+  // message off a short phone. Getting out is the header's back button.
+  if (/^\/groups\/[^/]+$/.test(pathname)) return null;
+
   return (
     <nav
       aria-label="主要導航"

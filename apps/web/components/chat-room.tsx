@@ -701,7 +701,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ol className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-4">
+      {/* The scroller and the list are separate elements on purpose: putting
+          `justify-end` on the scroller itself makes overflowing content
+          unreachable in Chrome, so the list grows to at least the scroller's
+          height and pins itself to the bottom from the inside. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
         {before ? (
           <li className="self-center">
             <Button
@@ -936,6 +941,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         })}
         <div ref={bottom} />
       </ol>
+      </div>
 
       {error ? (
         <Message tone="error" className="mx-4">
@@ -1013,7 +1019,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           aria-expanded={pickerOpen}
           onClick={() => setPickerOpen(true)}
         >
-          <StickerFaceIcon className="size-4" />
+          <StickerFaceIcon className="size-5" />
           <span className="sr-only">貼圖</span>
         </Button>
         <Input
