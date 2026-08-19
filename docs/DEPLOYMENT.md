@@ -53,27 +53,34 @@ cp .env.example .env
 ## 啟動
 
 ```bash
+scripts/deploy.sh
+```
+
+建置、啟動，然後**證明跑起來的就是這個 checkout**。加 `--pull` 會先 `git pull --ff-only origin main`（只在工作目錄乾淨時）；不加就部署當下 checkout 的內容，並印出是哪個 commit。
+
+`up -d --build` 本身不會告訴你成功與否，有兩種失敗是無聲的：
+
+- **web image 沒重建**——它照樣回 200，只是端出上一版的 UI，任何狀態碼都分不出來。
+- **migration 沒套用**——API 起得來，然後在唯一需要新欄位的那支端點 500。
+
+腳本檢查的東西一律**從 checkout 推導**，不寫死：migration 版本取自 `apps/api/migrations` 的檔名，CSS 標記取自 `globals.css` 裡宣告的 `@utility` 名稱。需要每次改碼都跟著手改的檢查，遲早會被留在原地然後開始說謊。
+
+CSS 的標記用 class 名稱而不是顏色值，因為**生產建置會把 `oklch()` 降級成 hex 加 `lab()` fallback**——拿原始碼裡的 token 去 grep 服務出來的 CSS，不管部署多正確都找不到。
+
+要手動跑那三段檢查也可以：
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.deploy.yml --profile tunnel up -d --build
+scripts/check-exposure.sh
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8090/login          # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8090/api/v1/auth/me  # 401
 ```
 
 `--build` 是必要的：`docker-compose.deploy.yml` 用建置參數把前端的 API base 設成空字串，沿用舊 image 會帶著別人的 `localhost`。
 
-## 部署後檢查
+## 腳本檢查不到的
 
-```bash
-scripts/check-exposure.sh
-```
-
-確認沒有東西從這台機器外面連得到。應該全部是 `ok`。
-
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8090/login
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8090/api/v1/auth/me
-```
-
-第一個要 `200`（網站），第二個要 `401`（API 有回應，只是沒登入）。兩個都通過代表路徑分流正確。
-
-接著用手機開你的網域，跑一次：註冊 → 建群 → 拍照發布 → 分享 → 另一支手機用邀請連結加入 → 互動。特別確認**聊天室的即時更新**有效——那代表 WebSocket 穿過 tunnel 成功了，是這個拓撲裡最容易出問題的一段。
+用手機開你的網域，跑一次：註冊 → 建群 → 拍照發布 → 分享 → 另一支手機用邀請連結加入 → 互動。特別確認**聊天室的即時更新**有效——那代表 WebSocket 穿過 tunnel 成功了，是這個拓撲裡最容易出問題的一段。
 
 ## 備份
 
