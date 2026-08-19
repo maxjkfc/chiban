@@ -1,8 +1,10 @@
 "use client";
 
-import { CameraIcon, ImageIcon, XIcon } from "lucide-react";
+import { CameraIcon, CheckIcon, ClockIcon, ImageIcon, PlusIcon, XIcon } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { Tape } from "@/components/tape";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +13,7 @@ import {
   apiFetch,
   apiUrl,
   ApiRequestError,
+  localTimeOfDay,
   type Group,
   type Meal,
 } from "@/lib/api";
@@ -19,7 +22,6 @@ import { cn } from "@/lib/utils";
 const MAX_PHOTOS = 4;
 
 const mealTypes = [
-  { value: "", label: "不指定" },
   { value: "breakfast", label: "早餐" },
   { value: "lunch", label: "午餐" },
   { value: "dinner", label: "晚餐" },
@@ -43,15 +45,21 @@ function pickerClassName(atLimit: boolean, variant?: "outline") {
 }
 
 /**
- * Recording is the product's main job, so the required path is photo then
- * publish: meal type, time and note are all optional and sit below the fold.
+ * Recording is the product's main job, so everything it needs is on one
+ * screen: the photo, a line to write on, the meal type, and who sees it.
  *
- * Taking a photo and choosing one are deliberately two separate inputs. The
- * `capture` attribute asks the browser for a capture-type picker instead of a
- * file picker, so one input can offer the camera or the library but never
- * both; and with `capture` set a phone hands back exactly one photo, which
- * would put the 1-4 photo range out of reach on the device this product is
- * actually used on.
+ * Meal type used to sit inside a collapsed section below the publish button,
+ * which put the two-second decision after the commitment. It is five stickers
+ * now — small enough to be free, close enough to be answered before publishing.
+ *
+ * The empty card offers the camera and the library as two separate inputs,
+ * because one input cannot be both: the `capture` attribute asks the browser
+ * for a capture-type picker, and a phone with it set hands back exactly one
+ * photo. Making it the only input would put the 1-4 photo range out of reach.
+ *
+ * Photos 2-4 go through the library input on the empty slots, which has no
+ * `capture` and so takes several at once. A phone's own sheet still offers the
+ * camera from there, so nothing is lost by not repeating the split.
  */
 export default function RecordPage() {
   const [photos, setPhotos] = useState<Picked[]>([]);
@@ -192,120 +200,172 @@ export default function RecordPage() {
     }
   }
 
-  return (
-    <main className="flex flex-1 flex-col gap-5 p-6">
-      <h1>記錄</h1>
+  const hero = photos[0];
 
-      {/* Labels, not buttons with an onClick that calls input.click().
-          Opening the picker is then done by the browser itself, so the app's
-          primary action still works if the page has not hydrated — which is
-          exactly the state a tab left open across a redeploy ends up in. */}
-      <div className="grid grid-cols-2 gap-3">
-        <label className={pickerClassName(remaining === 0)}>
-          <CameraIcon aria-hidden />
-          拍照
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            disabled={remaining === 0}
-            className="sr-only"
-            onChange={addFiles}
+  return (
+    <main className="flex flex-1 flex-col gap-4 px-5 pt-7 pb-5">
+      <header className="flex flex-col gap-1">
+        <h1>記一餐</h1>
+        <p className="text-muted-foreground text-sm">拍一張，寫一句，貼上去。</p>
+      </header>
+
+      {/* The card being made. Empty, it is the picker; filled, it is the meal
+          with its caption line — the same object either way, which is what
+          makes the flow read as one step instead of three. */}
+      <div className="polaroid relative -rotate-[1deg] p-2.5 pb-0">
+        {hero ? (
+          <>
+            <Tape tone={1} className="-top-2.5 left-1/2 w-[74px] -translate-x-[37px] -rotate-[2deg]" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={hero.previewUrl}
+              alt="第 1 張照片"
+              className="h-52 w-full rounded-[2px] object-cover"
+            />
+          </>
+        ) : (
+          <div className="border-input grid h-52 place-items-center rounded-[2px] border-2 border-dashed">
+            <div className="flex flex-col items-center gap-3">
+              <CameraIcon className="text-muted-foreground size-8" aria-hidden />
+              <div className="flex gap-2">
+                <label className={pickerClassName(false)}>
+                  <CameraIcon aria-hidden />
+                  拍照
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={addFiles}
+                  />
+                </label>
+                <label className={pickerClassName(false, "outline")}>
+                  <ImageIcon aria-hidden />
+                  相簿
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="sr-only"
+                    onChange={addFiles}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* The caption goes on the card's white margin, where you would write
+            it on the real thing. */}
+        <div className="py-1">
+          <Label htmlFor="description" className="sr-only">
+            備註
+          </Label>
+          <Input
+            id="description"
+            variant="ruled"
+            maxLength={500}
+            placeholder="寫點什麼…"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
           />
-        </label>
-        <label className={pickerClassName(remaining === 0, "outline")}>
-          <ImageIcon aria-hidden />
-          從相簿選
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            disabled={remaining === 0}
-            className="sr-only"
-            onChange={addFiles}
-          />
-        </label>
+        </div>
       </div>
 
-      <p className="text-muted-foreground text-xs">
-        {remaining > 0
-          ? `還可以加 ${remaining} 張`
-          : `已達 ${MAX_PHOTOS} 張上限`}
+      {/* Every slot, always: the row says "up to four" without a sentence. */}
+      <ul className="flex gap-2">
+        {Array.from({ length: MAX_PHOTOS }, (_, index) => {
+          const photo = photos[index];
+          if (photo) {
+            return (
+              <li key={photo.previewUrl} className="relative flex-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.previewUrl}
+                  alt={`第 ${index + 1} 張照片`}
+                  className="aspect-square w-full rounded-md object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => removePhoto(index)}
+                  aria-label={`移除第 ${index + 1} 張照片`}
+                  className="bg-card border-border text-muted-foreground absolute -top-1.5 -right-1.5 grid size-6 place-items-center rounded-full border"
+                >
+                  <XIcon className="size-3.5" aria-hidden />
+                </button>
+              </li>
+            );
+          }
+          return (
+            <li key={`empty-${index}`} className="flex-1">
+              <label
+                className={cn(
+                  "border-input text-muted-foreground grid aspect-square w-full cursor-pointer place-items-center rounded-md border-[1.5px] border-dashed",
+                  remaining === 0 && "pointer-events-none opacity-50",
+                )}
+              >
+                <PlusIcon className="size-4" aria-hidden />
+                <span className="sr-only">再加一張照片</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={remaining === 0}
+                  className="sr-only"
+                  onChange={addFiles}
+                />
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="sr-only">餐別</legend>
+        <ul className="flex justify-between gap-2">
+          {mealTypes.map((type) => {
+            const chosen = mealType === type.value;
+            return (
+              <li key={type.value}>
+                <button
+                  type="button"
+                  aria-pressed={chosen}
+                  // Toggling off is how "不指定" is said now: the old select
+                  // needed a row for it, a sticker just comes back off.
+                  onClick={() =>
+                    setMealType((current) =>
+                      current === type.value ? "" : type.value,
+                    )
+                  }
+                  className={cn(
+                    "grid size-[3.6rem] cursor-pointer place-items-center rounded-full text-[0.8rem] transition-transform active:scale-95",
+                    chosen
+                      ? "bg-primary text-primary-foreground shadow-pop -rotate-[4deg] font-bold"
+                      : "bg-card border-border text-muted-foreground border",
+                  )}
+                >
+                  {type.label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </fieldset>
+
+      <p className="text-muted-foreground flex items-center gap-2 text-xs">
+        <ClockIcon className="size-4" aria-hidden />
+        用餐時間記為現在。記錄完可以在這一餐裡改。
       </p>
 
-      {photos.length > 0 ? (
-        <ul className="grid grid-cols-4 gap-2">
-          {photos.map((photo, index) => (
-            <li key={photo.previewUrl} className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photo.previewUrl}
-                alt={`第 ${index + 1} 張照片`}
-                className="aspect-square w-full rounded-xl object-cover"
-              />
-              <button
-                type="button"
-                onClick={() => removePhoto(index)}
-                aria-label={`移除第 ${index + 1} 張照片`}
-                className="bg-background/90 absolute -top-1.5 -right-1.5 rounded-full border p-1"
-              >
-                <XIcon className="size-3.5" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      <Button
-        onClick={handlePublish}
-        loading={submitting}
-        disabled={photos.length === 0}
-      >
-        {submitting ? "發布中…" : "發布"}
-      </Button>
-
-      <details className="flex flex-col gap-3">
-        <summary className="text-muted-foreground text-sm">
-          加上餐別與備註
-        </summary>
-        <div className="mt-3 flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="meal-type">餐別</Label>
-            <select
-              id="meal-type"
-              className="border-input bg-card h-11 rounded-2xl border px-4 text-sm"
-              value={mealType}
-              onChange={(event) => setMealType(event.target.value)}
-            >
-              {mealTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="description">備註</Label>
-            <Input
-              id="description"
-              maxLength={500}
-              placeholder="例如：今天外食"
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-        </div>
-      </details>
-
-      {/* Sharing sits above the fold, unlike the other optional fields: it is
-          the difference between a private note and the point of the product,
-          and it has to be a decision made before publishing, not after. */}
+      {/* Sharing is the difference between a private note and the point of the
+          product, so it is a decision made before publishing, not after. */}
       {groups.length > 0 ? (
         <fieldset className="flex flex-col gap-2">
-          <legend className="text-sm font-medium">分享到</legend>
+          <legend className="text-muted-foreground text-xs font-bold">
+            貼到哪個群組
+          </legend>
           <ul className="flex flex-wrap gap-2">
-            {groups.map((group) => {
+            {groups.map((group, index) => {
               const chosen = shareWith.includes(group.id);
               return (
                 <li key={group.id}>
@@ -319,43 +379,62 @@ export default function RecordPage() {
                           : [...current, group.id],
                       )
                     }
-                    className={`h-9 cursor-pointer rounded-full border px-3 text-sm ${
+                    className={cn(
+                      "flex h-10 cursor-pointer items-center gap-1.5 rounded-md px-3.5 text-sm",
+                      index % 2 === 0 ? "-rotate-[1deg]" : "rotate-[0.8deg]",
                       chosen
-                        ? "border-primary bg-primary/10 text-primary font-medium"
-                        : "border-input text-muted-foreground"
-                    }`}
+                        ? "bg-primary text-primary-foreground font-bold"
+                        : "bg-card border-border text-muted-foreground border",
+                    )}
                   >
+                    {chosen ? <CheckIcon className="size-3.5" aria-hidden /> : null}
                     {group.name}
                   </button>
                 </li>
               );
             })}
           </ul>
-          <p className="text-muted-foreground text-xs">
-            沒有選就只有自己看得到。
-          </p>
+          <p className="text-muted-foreground text-xs">沒選就只有自己看得到。</p>
         </fieldset>
       ) : null}
 
       {error ? <Message tone="error">{error}</Message> : null}
 
+      <Button
+        size="lg"
+        onClick={handlePublish}
+        loading={submitting}
+        disabled={photos.length === 0}
+      >
+        {submitting ? "貼上去…" : "貼上去"}
+      </Button>
+
       {published ? (
-        <section className="flex flex-col gap-3 border-t pt-5">
+        <section className="border-border flex flex-col gap-3 border-t pt-5">
           <Message tone="success">已記錄</Message>
-          <ul className="grid grid-cols-2 gap-2">
-            {published.photo_ids.map((id) => (
-              <li key={id}>
-                {/* Photos are addressed by application ID and streamed by the
-                    API after it checks authorization. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={apiUrl(`/api/v1/meal-images/${id}`)}
-                  alt="這一餐的照片"
-                  className="aspect-square w-full rounded-md object-cover"
-                />
-              </li>
-            ))}
-          </ul>
+          <Link
+            href={`/meals/${published.id}`}
+            className="polaroid relative block rotate-[1.1deg]"
+          >
+            <Tape tone={3} className="-top-2.5 right-8 w-[74px] rotate-[5deg]" />
+            <ul className="grid grid-cols-2 gap-1.5">
+              {published.photo_ids.map((id) => (
+                <li key={id}>
+                  {/* Photos are addressed by application ID and streamed by the
+                      API after it checks authorization. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={apiUrl(`/api/v1/meal-images/${id}`)}
+                    alt="這一餐的照片"
+                    className="aspect-square w-full rounded-[2px] object-cover"
+                  />
+                </li>
+              ))}
+            </ul>
+            <p className="text-muted-foreground mt-2.5 text-xs">
+              {localTimeOfDay(published.eaten_at_local)} · 點一下打開這一餐
+            </p>
+          </Link>
         </section>
       ) : null}
     </main>

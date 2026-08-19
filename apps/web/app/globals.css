@@ -9,7 +9,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-heading);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,13 +39,28 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+   * Three radii, not one. A single value made everything the same weight; the
+   * scrapbook needs a card that reads as photographic paper (nearly square), a
+   * panel that reads as a surface, and a control that reads as pressable.
+   */
+  --radius-sm: 0.25rem; /* 4px — polaroid card, photo */
+  --radius-md: 0.75rem; /* 12px — thumbnail, sticker cell */
+  --radius-lg: 1rem; /* 16px — panel */
+  --radius-xl: 1.375rem; /* 22px — bottom sheet corners */
+  --radius-2xl: 1.625rem; /* 26px — large sheet, chat media */
+  --radius-3xl: 2.125rem; /* 34px — device frame */
+  --radius-4xl: 2.5rem;
+
+  /* Coral text on paper needs to be darker than coral fill under white text. */
+  --color-primary-ink: var(--primary-ink);
+
+  /* Washi tape. Decoration only: never put text on one. */
+  --color-tape-1: var(--tape-1);
+  --color-tape-2: var(--tape-2);
+  --color-tape-3: var(--tape-3);
+  --color-tape-4: var(--tape-4);
 
   /* Playful accents for tags, avatars and empty states. */
   --color-brand: var(--brand);
@@ -53,55 +68,87 @@
   --color-mint: var(--mint);
   --color-sky: var(--sky);
   --color-berry: var(--berry);
-  --shadow-pop: 0 8px 20px -10px var(--pop-shadow);
+  --shadow-pop: 0 10px 18px -14px var(--pop-shadow);
 }
 
 /*
- * Warm, food-first palette: cream page, white cards floating on it, coral as
- * the one loud colour. Primary stays at L 0.58 so white text on it clears
- * WCAG AA — the palette is playful, not unreadable.
+ * Paper, not a page. Content sits on white polaroid cards floating over a
+ * warm, faintly grained sheet, and coral is the one loud colour.
+ *
+ * Two coral tokens, because one cannot do both jobs: `--primary` at L 0.55
+ * carries white text at 4.9:1, and `--primary-ink` at L 0.50 is coral *as*
+ * text on the paper at 4.6:1. Using the fill colour for text was the bug the
+ * old single token hid.
  */
 :root {
-  --background: oklch(0.975 0.018 78);
-  --foreground: oklch(0.25 0.03 55);
+  --background: oklch(0.965 0.014 88);
+  --foreground: oklch(0.26 0.02 60);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.25 0.03 55);
+  --card-foreground: oklch(0.26 0.02 60);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.25 0.03 55);
-  --primary: oklch(0.58 0.19 32);
+  --popover-foreground: oklch(0.26 0.02 60);
+  --primary: oklch(0.55 0.17 32);
   --primary-foreground: oklch(0.99 0.01 80);
+  --primary-ink: oklch(0.5 0.17 32);
   --secondary: oklch(0.93 0.09 95);
   --secondary-foreground: oklch(0.36 0.07 70);
-  --muted: oklch(0.95 0.022 80);
-  --muted-foreground: oklch(0.52 0.035 60);
+  --muted: oklch(0.94 0.022 82);
+  --muted-foreground: oklch(0.48 0.03 60);
   --accent: oklch(0.91 0.09 165);
   --accent-foreground: oklch(0.34 0.07 165);
-  --destructive: oklch(0.55 0.21 18);
-  --border: oklch(0.9 0.03 78);
-  --input: oklch(0.88 0.035 78);
-  --ring: oklch(0.7 0.16 40);
-  --brand: oklch(0.58 0.19 32);
+  --destructive: oklch(0.52 0.2 20);
+  --border: oklch(0.9 0.02 80);
+  --input: oklch(0.88 0.03 80);
+  --ring: oklch(0.62 0.15 35);
+  --tape-1: oklch(0.62 0.14 30);
+  --tape-2: oklch(0.62 0.14 95);
+  --tape-3: oklch(0.62 0.14 200);
+  --tape-4: oklch(0.62 0.14 330);
+  --brand: oklch(0.55 0.17 32);
   --mango: oklch(0.78 0.16 68);
   --mint: oklch(0.74 0.14 165);
   --sky: oklch(0.7 0.13 235);
   --berry: oklch(0.58 0.2 320);
-  --pop-shadow: oklch(0.5 0.15 40 / 0.35);
+  --pop-shadow: oklch(0.4 0.06 60 / 0.7);
+  --paper-grain: oklch(0.72 0.04 70 / 0.16);
   --chart-1: var(--brand);
   --chart-2: var(--mango);
   --chart-3: var(--mint);
   --chart-4: var(--sky);
   --chart-5: var(--berry);
   --radius: 1rem;
-  --sidebar: oklch(0.985 0.012 80);
-  --sidebar-foreground: oklch(0.25 0.03 55);
+
+  /*
+   * The serif heading against the sans body is what stops a page reading as a
+   * form. Both stacks are system fonts on purpose: a Traditional Chinese
+   * webfont is megabytes per weight even subsetted, which is the wrong trade
+   * on a phone-first app. Georgia leads the heading stack so Latin and
+   * numerals are set properly; it has no CJK, so Chinese falls through to
+   * Songti / Noto Serif, which ship on macOS, iOS and Android respectively.
+   */
+  --font-sans:
+    var(--font-geist-sans), "PingFang TC", "Noto Sans TC", "Microsoft JhengHei",
+    system-ui, sans-serif;
+  --font-heading:
+    Georgia, "Songti TC", "Noto Serif TC", "Source Han Serif TC", "MingLiU",
+    serif;
+
+  --sidebar: oklch(0.98 0.012 84);
+  --sidebar-foreground: oklch(0.26 0.02 60);
   --sidebar-primary: var(--brand);
   --sidebar-primary-foreground: oklch(0.99 0.01 80);
-  --sidebar-accent: oklch(0.95 0.022 80);
-  --sidebar-accent-foreground: oklch(0.25 0.03 55);
-  --sidebar-border: oklch(0.9 0.03 78);
-  --sidebar-ring: oklch(0.7 0.16 40);
+  --sidebar-accent: oklch(0.94 0.022 82);
+  --sidebar-accent-foreground: oklch(0.26 0.02 60);
+  --sidebar-border: oklch(0.9 0.02 80);
+  --sidebar-ring: oklch(0.62 0.15 35);
 }
 
+/*
+ * Dark tokens are kept complete but deliberately unreachable: there is no
+ * switcher, and paper grain in the dark reads as a fake texture rather than a
+ * surface. Whoever adds the switcher has to solve that first — see
+ * docs/DESIGN_SYSTEM.md.
+ */
 .dark {
   --background: oklch(0.2 0.02 50);
   --foreground: oklch(0.97 0.012 80);
@@ -111,6 +158,7 @@
   --popover-foreground: oklch(0.97 0.012 80);
   --primary: oklch(0.72 0.17 40);
   --primary-foreground: oklch(0.2 0.03 40);
+  --primary-ink: oklch(0.78 0.15 40);
   --secondary: oklch(0.33 0.045 80);
   --secondary-foreground: oklch(0.95 0.02 85);
   --muted: oklch(0.3 0.02 60);
@@ -121,12 +169,17 @@
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 16%);
   --ring: oklch(0.62 0.15 40);
+  --tape-1: oklch(0.68 0.13 30);
+  --tape-2: oklch(0.68 0.13 95);
+  --tape-3: oklch(0.68 0.13 200);
+  --tape-4: oklch(0.68 0.13 330);
   --brand: oklch(0.72 0.17 40);
   --mango: oklch(0.82 0.15 70);
   --mint: oklch(0.78 0.13 165);
   --sky: oklch(0.74 0.12 235);
   --berry: oklch(0.68 0.18 320);
   --pop-shadow: oklch(0 0 0 / 0.5);
+  --paper-grain: oklch(1 0 0 / 0.05);
   --sidebar: oklch(0.25 0.022 50);
   --sidebar-foreground: oklch(0.97 0.012 80);
   --sidebar-primary: var(--brand);
@@ -143,19 +196,65 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* The grain is what makes the background read as paper rather than as a
+       beige rectangle. It is a 7px dot screen, faint enough not to fight text
+       and not to band on a low-DPI screen. */
+    background-image: radial-gradient(var(--paper-grain) 1px, transparent 1px);
+    background-size: 7px 7px;
   }
   html {
     @apply font-sans;
   }
-  /* Headings carry the energy; body copy stays quiet. */
+  /* Headings are the scrapbook's handwriting: a serif against the sans body.
+     The contrast between the two is what stops a page reading as a form. */
   h1 {
-    @apply text-[1.75rem] leading-tight font-extrabold tracking-tight;
+    @apply font-heading text-[1.9rem] leading-[1.1] font-black tracking-tight;
   }
   h2 {
-    @apply font-bold;
+    @apply font-heading font-black;
   }
 }
 
+/*
+ * A photo mounted on paper. Padding is asymmetric on purpose — the wide bottom
+ * margin is where the caption goes, exactly like the real thing.
+ */
+@utility polaroid {
+  @apply bg-card border-border rounded-sm border p-2 pb-3 shadow-pop;
+}
+
+/*
+ * A strip of washi tape. Put it on a `relative` parent, position it over the
+ * card's top edge, and give it one of the four tape colours. One per card.
+ */
+@utility tape {
+  @apply pointer-events-none absolute h-5 border-x border-dashed;
+}
+
+/* A notebook rule to write on, instead of a boxed input. */
+@utility ruled {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 1.6875rem,
+    var(--border) 1.6875rem 1.75rem
+  );
+}
+
+/*
+ * A screen reached by a back button is not a tab, and its title should not
+ * shout like one. Two sizes, both still `h1` for the document outline:
+ * `page-title-sub` for a detail screen, `page-title-bar` for a compact bar
+ * that also carries a subtitle. Anything else uses the global `h1`.
+ */
+@utility page-title-sub {
+  @apply font-heading text-2xl leading-tight font-black tracking-tight;
+}
+
+@utility page-title-bar {
+  @apply font-heading text-lg leading-tight font-black;
+}
+
+/* A plain surface for lists and settings — no tape, no tilt. */
 @utility card-surface {
-  @apply bg-card rounded-2xl border p-4 shadow-pop;
+  @apply bg-card rounded-lg border p-4 shadow-pop;
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { ImageIcon, SendHorizonalIcon, SmileIcon, XIcon } from "lucide-react";
+import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
 import { MealCard } from "@/components/meal-card";
+import { StickerFaceIcon, StickerPicker } from "@/components/sticker-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
@@ -22,7 +23,6 @@ import {
   type MessagePage,
   type ReactionChange,
   type SocketEvent,
-  type Sticker,
   type User,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -230,9 +230,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // at reply and reactions without a hover state or a long-press gesture.
   const [openActions, setOpenActions] = useState<string | null>(null);
   const [reactionTypes, setReactionTypes] = useState<string[]>([]);
-  // The picker's contents, loaded the first time it is opened rather than on
-  // every visit to a chat: most conversations never open it.
-  const [stickers, setStickers] = useState<Sticker[] | null>(null);
+  // The sticker tray's contents live in the picker: the quick rail cannot draw
+  // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   // The id of the send currently in doubt, kept with the text it belongs to so
@@ -597,24 +596,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setMessages((current) => merge(current, [sent], "newer"));
   }
 
-  // Opening the picker is what loads it. A library that fails to load says so
-  // rather than looking like an empty one, because "you have no stickers" and
-  // "we could not ask" lead to completely different next actions.
-  async function togglePicker() {
-    const opening = !pickerOpen;
-    setPickerOpen(opening);
-    if (!opening || stickers !== null) return;
-
-    try {
-      setStickers(await apiFetch<Sticker[]>("/api/v1/me/stickers"));
-    } catch {
-      setError("讀不到你的貼圖，稍後再試");
-      setPickerOpen(false);
-    }
-  }
-
-  async function handleSendSticker(stickerID: string) {
-    if (sending) return;
+  // Answers whether the sticker actually went out, so the picker knows to
+  // close itself or to keep the tray up with the failure on it — an error line
+  // behind an open sheet is an error nobody reads.
+  async function handleSendSticker(stickerID: string): Promise<boolean> {
+    if (sending) return false;
 
     const clientMessageID =
       pendingSticker.current?.stickerID === stickerID
@@ -638,14 +624,15 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pendingSticker.current = null;
       setReplyTo(null);
-      setPickerOpen(false);
       setMessages((current) => merge(current, [sent], "newer"));
+      return true;
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
           ? caught.message
           : "貼圖送不出去，再試一次",
       );
+      return false;
     } finally {
       setSending(false);
     }
@@ -752,7 +739,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ol className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+      {/* The scroller and the list are separate elements on purpose: putting
+          `justify-end` on the scroller itself makes overflowing content
+          unreachable in Chrome, so the list grows to at least the scroller's
+          height and pins itself to the bottom from the inside. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
         {before ? (
           <li className="self-center">
             <Button
@@ -803,7 +795,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                 </span>
                 {message.reply_to ? (
                   <blockquote
-                    className={`border-primary/40 text-muted-foreground max-w-full border-l-2 px-2 text-xs ${
+                    className={`bg-muted border-primary/50 text-muted-foreground max-w-full rounded-md border-l-2 px-2.5 py-1.5 text-xs ${
                       mine ? "text-right" : ""
                     }`}
                   >
@@ -817,7 +809,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                 ) : null}
 
                 {message.deleted ? (
-                  <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
+                  <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
                 ) : message.sticker_id ? (
@@ -854,7 +846,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                         open === message.id ? null : message.id,
                       )
                     }
-                    className="cursor-pointer"
+                    className={`polaroid cursor-pointer ${mine ? "rotate-[1.2deg]" : "-rotate-[1.2deg]"}`}
                   >
                     {/* A GIF animates in an img tag; nothing re-encodes it on
                         the way here. */}
@@ -862,7 +854,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     <img
                       src={chatMediaUrl(message.chat_media_id)}
                       alt="傳送的圖片"
-                      className="max-h-64 w-56 rounded-2xl object-cover"
+                      className="max-h-64 w-52 rounded-[2px] object-cover"
                     />
                   </button>
                 ) : message.meal_record_id ? (
@@ -892,8 +884,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                         open === message.id ? null : message.id,
                       )
                     }
-                    className={`cursor-pointer rounded-2xl px-3 py-2 text-start text-sm whitespace-pre-wrap ${
-                      mine ? "bg-primary text-primary-foreground" : "bg-muted"
+                    className={`shadow-pop cursor-pointer px-3.5 py-2.5 text-start text-sm leading-relaxed whitespace-pre-wrap ${
+                      mine
+                        ? "bg-primary text-primary-foreground rotate-[0.4deg] rounded-[1.125rem_1.125rem_0.375rem_1.125rem]"
+                        : "bg-card border-border -rotate-[0.4deg] rounded-[1.125rem_1.125rem_1.125rem_0.375rem] border"
                     }`}
                   >
                     {message.content}
@@ -912,10 +906,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                           onClick={() =>
                             handleReact(message, reaction.reaction_type)
                           }
-                          className={`flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2 text-xs ${
+                          className={`relative flex h-8 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] ${
                             reaction.mine
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-transparent bg-muted"
+                              ? "border-primary/50 bg-primary/10 text-primary-ink font-bold"
+                              : "bg-card border-border"
                           }`}
                         >
                           <span aria-hidden>{reaction.reaction_type}</span>
@@ -930,13 +924,13 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                 ) : null}
 
                 {openActions === message.id ? (
-                  <div className="bg-card flex flex-wrap items-center gap-1 rounded-2xl border p-1">
+                  <div className="bg-card shadow-pop flex flex-wrap items-center gap-1 rounded-lg border p-1.5">
                     {reactionTypes.map((reactionType) => (
                       <button
                         key={reactionType}
                         type="button"
                         onClick={() => handleReact(message, reactionType)}
-                        className="hover:bg-muted size-9 cursor-pointer rounded-full text-base"
+                        className="hover:bg-muted size-11 cursor-pointer rounded-full text-lg"
                       >
                         <span aria-hidden>{reactionType}</span>
                         <span className="sr-only">{`用 ${reactionType} 回應`}</span>
@@ -985,6 +979,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         })}
         <div ref={bottom} />
       </ol>
+      </div>
 
       {error ? (
         <Message tone="error" className="mx-4">
@@ -1004,7 +999,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       ) : null}
 
       {replyTo ? (
-        <div className="bg-muted/50 mx-4 flex items-center gap-2 rounded-2xl px-3 py-2 text-xs">
+        <div className="bg-muted border-primary/50 mx-4 flex items-center gap-2 rounded-md border-l-2 px-3 py-2 text-xs">
           <span className="text-muted-foreground shrink-0">回覆</span>
           <span className="font-medium shrink-0">
             {nameOf(replyTo.user_id)}
@@ -1023,47 +1018,20 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         </div>
       ) : null}
 
-      {pickerOpen ? (
-        <div className="mx-4 rounded-2xl border p-3">
-          {stickers === null ? (
-            <p className="text-muted-foreground text-xs">載入中…</p>
-          ) : stickers.length === 0 ? (
-            <p className="text-muted-foreground text-xs">
-              還沒有貼圖。到{" "}
-              <Link href="/profile/stickers" className="underline">
-                我的貼圖
-              </Link>{" "}
-              上傳第一張。
-            </p>
-          ) : (
-            <ul className="grid grid-cols-4 gap-2">
-              {stickers.map((sticker) => (
-                <li key={sticker.id}>
-                  {/* One tap sends. A picker that needed a second confirming
-                      tap would be slower than typing, which is the one thing
-                      a sticker has to beat. */}
-                  <button
-                    type="button"
-                    disabled={sending}
-                    onClick={() => handleSendSticker(sticker.id)}
-                    className="cursor-pointer disabled:opacity-50"
-                    aria-label="傳送這個貼圖"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={stickerUrl(sticker.id)}
-                      alt=""
-                      className="aspect-square w-full object-contain"
-                    />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
+      <StickerPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSend={handleSendSticker}
+        sending={sending}
+        // Once there is a draft, the keyboard and the text are what matter; a
+        // permanent rail would cost conversation height for the rest of the chat.
+        showRail={draft.trim().length === 0}
+      />
 
-      <form onSubmit={handleSend} className="flex gap-2 border-t p-4">
+      <form
+        onSubmit={handleSend}
+        className="border-border flex gap-2 border-t px-4 py-3"
+      >
         {/* A native label opens the picker without waiting for hydration,
             the same reason the record page does it this way. */}
         <label
@@ -1087,9 +1055,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           variant="outline"
           size="icon"
           aria-expanded={pickerOpen}
-          onClick={togglePicker}
+          onClick={() => setPickerOpen(true)}
         >
-          <SmileIcon aria-hidden />
+          <StickerFaceIcon className="size-5" />
           <span className="sr-only">貼圖</span>
         </Button>
         <Input

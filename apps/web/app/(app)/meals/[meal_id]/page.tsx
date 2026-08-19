@@ -1,8 +1,10 @@
 "use client";
 
+import { CheckIcon, ChevronLeftIcon, Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
+import { Tape } from "@/components/tape";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +17,7 @@ import {
   type Group,
   type Meal,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const mealTypes = [
   { value: "", label: "不指定" },
@@ -183,58 +186,66 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
 
   if (!meal) {
     return (
-      <main className="flex flex-1 flex-col gap-4 p-6">
+      <main className="flex flex-1 flex-col gap-4 px-5 pt-7 pb-5">
         <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
       </main>
     );
   }
 
-  return (
-    <main className="flex flex-1 flex-col gap-5 p-6">
-      <h1>這一餐</h1>
+  const single = meal.photo_ids.length === 1;
 
-      <ul className="grid grid-cols-2 gap-2">
-        {meal.photo_ids.map((id) => (
-          <li key={id}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={apiUrl(`/api/v1/meal-images/${id}`)}
-              alt="這一餐的照片"
-              className="aspect-square w-full rounded-2xl object-cover"
-            />
-          </li>
-        ))}
-      </ul>
+  return (
+    <main className="flex flex-1 flex-col gap-4 px-5 pt-7 pb-5">
+      <header className="flex items-center gap-3">
+        <Button variant="outline" size="icon" onClick={() => router.back()} aria-label="回上一頁">
+          <ChevronLeftIcon aria-hidden />
+        </Button>
+        <h1 className="page-title-sub">這一餐</h1>
+      </header>
+
+      <div className="polaroid relative -rotate-[1deg]">
+        <Tape tone={1} className="-top-2.5 left-1/2 w-[74px] -translate-x-[37px] -rotate-[3deg]" />
+        <ul className={cn("grid gap-1.5", single ? "grid-cols-1" : "grid-cols-2")}>
+          {meal.photo_ids.map((id) => (
+            <li key={id}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={apiUrl(`/api/v1/meal-images/${id}`)}
+                alt="這一餐的照片"
+                className={cn(
+                  "w-full rounded-[2px] object-cover",
+                  single ? "h-60" : "aspect-square",
+                )}
+              />
+            </li>
+          ))}
+        </ul>
+        {/* The caption belongs on the card whoever is reading it. The owner's
+            editable copy sits below; this is what the meal says. */}
+        <div className="mt-2.5 flex items-baseline justify-between gap-2">
+          <span className="font-heading text-base font-black">
+            {mealTypeLabel(meal.meal_type) ?? "這一餐"}
+          </span>
+          <span className="text-muted-foreground text-xs">
+            {meal.eaten_at_local.replace("T", " ")}
+          </span>
+        </div>
+        {meal.description ? (
+          <p className="mt-1 text-sm leading-relaxed whitespace-pre-wrap">
+            {meal.description}
+          </p>
+        ) : null}
+      </div>
 
       {/* A shared meal is readable by the group but editable only by whoever
           recorded it. Showing everyone the form would offer a save that the
           API is always going to refuse. */}
-      {!meal.is_owner ? (
-        <dl className="flex flex-col gap-3">
-          <div className="flex gap-3 text-sm">
-            <dt className="text-muted-foreground w-20 shrink-0">用餐時間</dt>
-            <dd>{meal.eaten_at_local.replace("T", " ")}</dd>
-          </div>
-          {mealTypeLabel(meal.meal_type) ? (
-            <div className="flex gap-3 text-sm">
-              <dt className="text-muted-foreground w-20 shrink-0">餐別</dt>
-              <dd>{mealTypeLabel(meal.meal_type)}</dd>
-            </div>
-          ) : null}
-          {meal.description ? (
-            <div className="flex gap-3 text-sm">
-              <dt className="text-muted-foreground w-20 shrink-0">備註</dt>
-              <dd className="whitespace-pre-wrap">{meal.description}</dd>
-            </div>
-          ) : null}
-        </dl>
-      ) : null}
-
-      {/* Photos are fixed once published: replacing them would need the same
-          all-or-nothing upload handling as creating a meal, and nothing in
-          V0.1 asks for it. */}
       {meal.is_owner ? (
-        <form onSubmit={handleSave} className="flex flex-col gap-4">
+        <form onSubmit={handleSave} className="card-surface flex flex-col gap-4">
+          <h2 className="text-muted-foreground text-xs tracking-[0.06em]">
+            改一下
+          </h2>
+
           <div className="flex flex-col gap-2">
             <Label htmlFor="eaten-at">用餐時間</Label>
             <Input
@@ -246,27 +257,39 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
             />
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="meal-type">餐別</Label>
-            <select
-              id="meal-type"
-              className="border-input bg-card h-11 rounded-2xl border px-4 text-sm"
-              value={mealType}
-              onChange={(event) => setMealType(event.target.value)}
-            >
-              {mealTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium">餐別</legend>
+            <ul className="flex flex-wrap gap-2">
+              {mealTypes.map((type) => {
+                const chosen = mealType === type.value;
+                return (
+                  <li key={type.value}>
+                    <button
+                      type="button"
+                      aria-pressed={chosen}
+                      onClick={() => setMealType(type.value)}
+                      className={cn(
+                        "h-10 cursor-pointer rounded-full px-4 text-sm",
+                        chosen
+                          ? "bg-primary text-primary-foreground font-bold"
+                          : "bg-card border-input text-muted-foreground border",
+                      )}
+                    >
+                      {type.label}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </fieldset>
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="description">備註</Label>
             <Input
               id="description"
+              variant="ruled"
               maxLength={500}
+              placeholder="寫點什麼…"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
@@ -279,13 +302,17 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
             儲存
           </Button>
         </form>
+      ) : error ? (
+        <Message tone="error">{error}</Message>
       ) : null}
 
       {/* Sharing has to be revocable from the product, not only from the API:
           a meal shared by mistake is exactly the case this exists for. */}
       {meal.is_owner ? (
-        <section className="flex flex-col gap-2 border-t pt-5">
-          <h2 className="text-sm font-medium">分享</h2>
+        <section className="card-surface flex flex-col gap-3">
+          <h2 className="text-muted-foreground text-xs tracking-[0.06em]">
+            分享到
+          </h2>
           {sharesFailed || groupsFailed ? (
             <Message tone="error">
               無法載入分享狀態，重新整理後再試——在確定目前分享給誰之前，這裡不會顯示任何按鈕。
@@ -297,13 +324,20 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
               還沒有加入任何群組，所以只有你看得到這一餐。
             </p>
           ) : (
-            <ul className="flex flex-col gap-2">
+            <ul className="flex flex-col gap-3">
               {shareRows.map((row) => (
-                <li key={row.id} className="flex items-center gap-3 text-sm">
-                  <span className="flex-1">{row.name}</span>
+                <li key={row.id} className="flex items-center gap-3">
+                  <span className="flex flex-1 flex-col gap-0.5">
+                    <span className="text-sm font-bold">{row.name}</span>
+                    {row.shared ? (
+                      <span className="text-primary-ink flex items-center gap-1 text-xs font-bold">
+                        <CheckIcon className="size-3.5" aria-hidden />
+                        已分享
+                      </span>
+                    ) : null}
+                  </span>
                   <Button
                     variant={row.shared ? "outline" : "default"}
-                    size="sm"
                     disabled={busy}
                     onClick={() => handleToggleShare(row.id, row.shared)}
                   >
@@ -320,7 +354,7 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
       ) : null}
 
       {meal.is_owner ? (
-        <div className="flex flex-col gap-2 border-t pt-5">
+        <div className="flex flex-col gap-2">
           {confirmingDelete ? (
             <>
               <Message tone="error">刪除後就不會出現在你的紀錄裡。</Message>
@@ -345,6 +379,7 @@ export default function MealPage({ params }: PageProps<"/meals/[meal_id]">) {
               variant="destructive"
               onClick={() => setConfirmingDelete(true)}
             >
+              <Trash2Icon aria-hidden />
               刪除這筆紀錄
             </Button>
           )}

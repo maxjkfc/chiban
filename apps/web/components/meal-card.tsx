@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { Tape } from "@/components/tape";
 import {
   fetchMeal,
   localTimeOfDay,
@@ -21,6 +22,10 @@ type MealCardProps = {
  * the meal API, which decides on each request whether this reader may see it.
  * That is what makes unsharing and deleting take effect — the card cannot
  * outlive the permission that justified it, because it never held the data.
+ *
+ * It is a small polaroid rather than a chat bubble: a meal arriving in a
+ * conversation is the same object the Today page shows, and looking like one
+ * is what says "this is a record, not a picture someone posted".
  */
 export function MealCard({ mealId }: MealCardProps) {
   const [meal, setMeal] = useState<Meal | null>(null);
@@ -48,16 +53,13 @@ export function MealCard({ mealId }: MealCardProps) {
 
   if (state === "loading") {
     return (
-      <div
-        className="bg-muted h-32 w-56 animate-pulse rounded-2xl"
-        aria-hidden
-      />
+      <div className="bg-muted h-40 w-52 animate-pulse rounded-sm" aria-hidden />
     );
   }
 
   if (state === "failed") {
     return (
-      <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm">
+      <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm">
         飲食紀錄載入失敗
       </p>
     );
@@ -67,16 +69,18 @@ export function MealCard({ mealId }: MealCardProps) {
   // honestly described by saying there is nothing to show.
   if (state === "gone" || !meal) {
     return (
-      <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
+      <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
         此飲食紀錄已刪除
       </p>
     );
   }
 
   const label = mealTypeLabel(meal.meal_type);
+  const single = meal.photo_ids.length === 1;
 
   return (
-    <div className="bg-muted flex w-56 flex-col gap-2 overflow-hidden rounded-2xl p-2">
+    <div className="polaroid relative w-52 rotate-[1.4deg]">
+      <Tape tone={1} className="-top-2 left-1/2 w-16 -translate-x-1/2 -rotate-[3deg]" />
       <div className="grid grid-cols-2 gap-1">
         {meal.photo_ids.slice(0, 4).map((id) => (
           // eslint-disable-next-line @next/next/no-img-element
@@ -84,20 +88,22 @@ export function MealCard({ mealId }: MealCardProps) {
             key={id}
             src={mealImageUrl(id)}
             alt=""
-            className={`aspect-square w-full rounded-lg object-cover ${
-              meal.photo_ids.length === 1 ? "col-span-2 aspect-video" : ""
+            className={`w-full rounded-[2px] object-cover ${
+              single ? "col-span-2 h-[7.5rem]" : "aspect-square"
             }`}
           />
         ))}
       </div>
-      <p className="flex items-center gap-2 px-1 text-xs">
-        <span className="font-medium">{label ?? "飲食紀錄"}</span>
-        <span className="text-muted-foreground">
+      <p className="mt-2 flex items-baseline justify-between gap-2">
+        <span className="font-heading text-[0.8rem] font-black">
+          {label ?? "飲食紀錄"}
+        </span>
+        <span className="text-muted-foreground text-[0.66rem]">
           {localTimeOfDay(meal.eaten_at_local)}
         </span>
       </p>
       {meal.description ? (
-        <p className="line-clamp-2 px-1 text-xs">{meal.description}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs">{meal.description}</p>
       ) : null}
     </div>
   );

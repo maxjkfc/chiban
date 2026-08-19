@@ -5,6 +5,7 @@ import (
 	"image/gif"
 	"io"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -277,5 +278,170 @@ func TestAStickerMessageCarriesNoObjectPath(t *testing.T) {
 		if bytes.Contains(body, []byte(leak)) {
 			t.Fatalf("the message payload contains %q: %s", leak, body)
 		}
+	}
+}
+
+// pinnedRail reads the quick rail back out of a library: the pinned stickers,
+// in slot order. The library itself stays newest-first, so the rail is only
+// ever derived from pin_order — never from the position in the list.
+func pinnedRail(t *testing.T, library []testsupport.Sticker) []string {
+	t.Helper()
+
+	bySlot := map[int]string{}
+	for _, one := range library {
+		if one.PinOrder == 0 {
+			continue
+		}
+		if existing, taken := bySlot[one.PinOrder]; taken {
+			t.Fatalf("slot %d held by both %s and %s", one.PinOrder, existing, one.ID)
+		}
+		bySlot[one.PinOrder] = one.ID
+	}
+
+	rail := make([]string, 0, len(bySlot))
+	for slot := 1; slot <= len(bySlot); slot++ {
+		id, filled := bySlot[slot]
+		if !filled {
+			t.Fatalf("slot %d is empty but %d stickers are pinned", slot, len(bySlot))
+		}
+		rail = append(rail, id)
+	}
+	return rail
+}
+
+// The rail is a choice, so it has to keep the order it was chosen in — not the
+// order the stickers were uploaded in, which is what the library is sorted by.
+func TestAQuickRailKeepsTheOrderItWasPinnedIn(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	first := app.AddSticker(testsupport.JPEG(t, 100, 100), "1.jpg")
+	second := app.AddSticker(testsupport.JPEG(t, 100, 100), "2.jpg")
+	third := app.AddSticker(testsupport.JPEG(t, 100, 100), "3.jpg")
+
+	// Deliberately not the upload order, and deliberately not all of them.
+	library := app.PinStickers(third.ID, first.ID)
+
+	if rail := pinnedRail(t, library); !slices.Equal(rail, []string{third.ID, first.ID}) {
+		t.Fatalf("rail = %v, want %v", rail, []string{third.ID, first.ID})
+	}
+	// The library keeps its own newest-first order regardless of pinning.
+	if library[0].ID != third.ID || library[2].ID != first.ID {
+		t.Fatalf("library order changed: %+v", library)
+	}
+	for _, one := range library {
+		if one.ID == second.ID && one.PinOrder != 0 {
+			t.Fatalf("unpinned sticker reported slot %d", one.PinOrder)
+		}
+	}
+
+	// A fresh read agrees with what the write answered.
+	if rail := pinnedRail(t, app.ListStickers()); !slices.Equal(rail, []string{third.ID, first.ID}) {
+		t.Fatalf("rail after reload = %v, want %v", rail, []string{third.ID, first.ID})
+	}
+}
+
+// Reordering moves a sticker into a slot another one currently holds. The
+// unique index would refuse that if the slots were not cleared first, so this
+// is the case that says the write is a replacement rather than an upsert.
+func TestAQuickRailCanBeReorderedAndCleared(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	first := app.AddSticker(testsupport.JPEG(t, 100, 100), "1.jpg")
+	second := app.AddSticker(testsupport.JPEG(t, 100, 100), "2.jpg")
+
+	app.PinStickers(first.ID, second.ID)
+
+	swapped := app.PinStickers(second.ID, first.ID)
+	if rail := pinnedRail(t, swapped); !slices.Equal(rail, []string{second.ID, first.ID}) {
+		t.Fatalf("rail after swap = %v, want %v", rail, []string{second.ID, first.ID})
+	}
+
+	// Clearing is how someone goes back to the default of "the most recent
+	// four" without having to pick four they do not want.
+	cleared := app.PinStickers()
+	if rail := pinnedRail(t, cleared); len(rail) != 0 {
+		t.Fatalf("rail after clearing = %v, want empty", rail)
+	}
+}
+
+// Deleting a pinned sticker has to give up its slot: a rail pointing at
+// something the picker no longer offers would render a gap nobody can fill.
+func TestDeletingAPinnedStickerFreesItsSlot(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	pinned := app.AddSticker(testsupport.JPEG(t, 100, 100), "1.jpg")
+	other := app.AddSticker(testsupport.JPEG(t, 100, 100), "2.jpg")
+
+	app.PinStickers(pinned.ID)
+
+	if resp := app.DeleteSticker(pinned.ID); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete sticker: status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	library := app.ListStickers()
+	if rail := pinnedRail(t, library); len(rail) != 0 {
+		t.Fatalf("rail still holds %v after the pinned sticker was deleted", rail)
+	}
+
+	// And the freed slot takes a new sticker without any tidying up first.
+	if rail := pinnedRail(t, app.PinStickers(other.ID)); !slices.Equal(rail, []string{other.ID}) {
+		t.Fatalf("rail = %v, want %v", rail, []string{other.ID})
+	}
+}
+
+// Both of these are the caller's mistake to fix, so both are answered as bad
+// requests rather than left to surface as a database conflict.
+func TestAQuickRailRejectsTooManyAndRepeats(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	ids := make([]string, 0, 5)
+	for range 5 {
+		ids = append(ids, app.AddSticker(testsupport.JPEG(t, 100, 100), "s.jpg").ID)
+	}
+
+	if resp := app.PutStickerPins(ids...); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("pinning five: status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if resp := app.PutStickerPins(ids[0], ids[0]); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("pinning a repeat: status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	// A rejected request changes nothing.
+	if rail := pinnedRail(t, app.ListStickers()); len(rail) != 0 {
+		t.Fatalf("rail = %v after two rejected writes, want empty", rail)
+	}
+}
+
+// Someone else's sticker is not pinnable, and gets the same answer as an id
+// that never existed — the rule the rest of this domain already follows.
+func TestPinningSomeoneElsesStickerIsNotFound(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	hers := app.AddSticker(testsupport.JPEG(t, 100, 100), "hers.jpg")
+
+	// Onboarding switches the session, so everything below runs as 阿哲.
+	app.Onboard("zhe@example.com", "阿哲")
+	mine := app.AddSticker(testsupport.JPEG(t, 100, 100), "mine.jpg")
+
+	if resp := app.PutStickerPins(hers.ID); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("pinning someone else's sticker: status = %d, want %d",
+			resp.StatusCode, http.StatusNotFound)
+	}
+	if resp := app.PutStickerPins(uuid.NewString()); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("pinning an unknown sticker: status = %d, want %d",
+			resp.StatusCode, http.StatusNotFound)
+	}
+
+	// The failed writes left the caller's own rail alone.
+	if rail := pinnedRail(t, app.ListStickers()); len(rail) != 0 {
+		t.Fatalf("rail = %v after two rejected writes, want empty", rail)
+	}
+	if rail := pinnedRail(t, app.PinStickers(mine.ID)); !slices.Equal(rail, []string{mine.ID}) {
+		t.Fatalf("rail = %v, want %v", rail, []string{mine.ID})
 	}
 }

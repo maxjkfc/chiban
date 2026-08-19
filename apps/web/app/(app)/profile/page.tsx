@@ -1,10 +1,12 @@
 "use client";
 
+import { CameraIcon, ChevronRightIcon, SmileIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
+import { Tape } from "@/components/tape";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -115,30 +117,35 @@ export default function ProfilePage() {
   }
 
   return (
-    <main className="flex flex-1 flex-col gap-6 p-6">
+    <main className="flex flex-1 flex-col gap-4 px-5 pt-7 pb-5">
       <h1>我的</h1>
 
       {loaded ? (
-        <div className="flex items-center gap-4">
-          <Avatar
-            mediaId={profile?.avatar_media_id}
-            displayName={displayName}
-            className="size-20"
-          />
-          <div className="flex flex-col items-start gap-1">
+        <div className="flex items-center gap-5">
+          {/* The portrait is mounted like any other photo in this product —
+              taped onto the page, name written on the white margin. */}
+          <div className="polaroid relative -rotate-[2.4deg]">
+            <Tape tone={4} className="-top-2.5 left-1/2 w-16 -translate-x-8 rotate-[4deg]" />
+            <Avatar
+              mediaId={profile?.avatar_media_id}
+              displayName={displayName}
+              className="size-24 rounded-[2px]"
+            />
+            <p className="font-heading mt-2 text-center text-sm font-black">
+              {displayName || "（尚未設定暱稱）"}
+            </p>
+          </div>
+          <div className="flex flex-col items-start gap-2">
             {/* A label, so the browser opens the picker itself. */}
             <label
               className={cn(
-                buttonVariants({ variant: "outline", size: "sm" }),
+                buttonVariants({ variant: "outline" }),
                 "cursor-pointer",
                 uploadingAvatar && "pointer-events-none opacity-50",
               )}
             >
-              {uploadingAvatar
-                ? "上傳中…"
-                : profile?.avatar_media_id
-                  ? "更換頭像"
-                  : "設定頭像"}
+              <CameraIcon aria-hidden />
+              {uploadingAvatar ? "上傳中…" : "換一張"}
               <input
                 type="file"
                 accept="image/*"
@@ -147,8 +154,10 @@ export default function ProfilePage() {
                 onChange={handleAvatar}
               />
             </label>
-            <p className="text-muted-foreground text-xs">
-              可以略過，之後再設定。
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              可以略過，
+              <br />
+              之後再設定。
             </p>
           </div>
         </div>
@@ -157,11 +166,14 @@ export default function ProfilePage() {
       {avatarError ? <Message tone="error">{avatarError}</Message> : null}
 
       {loaded ? (
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="display-name">暱稱</Label>
+        <form onSubmit={handleSubmit} className="card-surface flex flex-col gap-5">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="display-name" className="text-muted-foreground text-xs tracking-[0.06em]">
+              暱稱
+            </Label>
             <Input
               id="display-name"
+              variant="ruled"
               required
               maxLength={50}
               value={displayName}
@@ -169,10 +181,13 @@ export default function ProfilePage() {
             />
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="timezone">時區</Label>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="timezone" className="text-muted-foreground text-xs tracking-[0.06em]">
+              時區
+            </Label>
             <Input
               id="timezone"
+              variant="ruled"
               required
               value={timezone}
               onChange={(event) => setTimezone(event.target.value)}
@@ -195,9 +210,11 @@ export default function ProfilePage() {
 
       <Link
         href="/profile/stickers"
-        className={buttonVariants({ variant: "outline" })}
+        className="card-surface flex items-center gap-3 no-underline"
       >
-        我的貼圖
+        <SmileIcon className="text-muted-foreground size-5" aria-hidden />
+        <span className="flex-1 text-sm font-bold">我的貼圖</span>
+        <ChevronRightIcon className="text-muted-foreground size-4" aria-hidden />
       </Link>
 
       <Button variant="outline" onClick={handleLogout}>

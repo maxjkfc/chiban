@@ -46,7 +46,7 @@ func (s *store) insert(
 
 func (s *store) listForOwner(ctx context.Context, userID uuid.UUID) ([]Sticker, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, media_type FROM user_stickers
+		SELECT id, media_type, pin_order FROM user_stickers
 		WHERE user_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC, id DESC
 	`, userID)
@@ -57,10 +57,15 @@ func (s *store) listForOwner(ctx context.Context, userID uuid.UUID) ([]Sticker, 
 
 	stickers := []Sticker{}
 	for rows.Next() {
-		var one Sticker
-		if err := rows.Scan(&one.ID, &one.Type); err != nil {
+		var (
+			one  Sticker
+			slot sql.NullInt16
+		)
+		if err := rows.Scan(&one.ID, &one.Type, &slot); err != nil {
 			return nil, fmt.Errorf("sticker: scan: %w", err)
 		}
+		// Zero means unpinned; the slots themselves are 1 to MaxPins.
+		one.PinOrder = int(slot.Int16)
 		stickers = append(stickers, one)
 	}
 	if err := rows.Err(); err != nil {
@@ -74,7 +79,7 @@ func (s *store) listForOwner(ctx context.Context, userID uuid.UUID) ([]Sticker, 
 // refused — the same answer an id that never existed gets.
 func (s *store) softDelete(ctx context.Context, stickerID, userID uuid.UUID) error {
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE user_stickers SET deleted_at = now()
+		UPDATE user_stickers SET deleted_at = now(), pin_order = NULL
 		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, stickerID, userID)
 	if err != nil {
@@ -119,4 +124,49 @@ func (s *store) find(ctx context.Context, stickerID uuid.UUID) (storedSticker, e
 		return storedSticker{}, fmt.Errorf("sticker: find: %w", err)
 	}
 	return one, nil
+}
+
+// setPins replaces the owner's whole quick rail in one transaction.
+//
+// Clearing every slot first is what makes reordering work: moving a sticker
+// from slot 2 to slot 1 would otherwise collide with whatever holds slot 1
+// until that row is written, and the unique index would refuse it.
+//
+// An id that is not this owner's live sticker matches no row, which is
+// reported as ErrNotFound rather than silently leaving a gap in the rail.
+func (s *store) setPins(ctx context.Context, userID uuid.UUID, stickerIDs []uuid.UUID) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sticker: begin pins: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_stickers SET pin_order = NULL
+		WHERE user_id = $1 AND pin_order IS NOT NULL
+	`, userID); err != nil {
+		return fmt.Errorf("sticker: clear pins: %w", err)
+	}
+
+	for slot, stickerID := range stickerIDs {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE user_stickers SET pin_order = $3
+			WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		`, stickerID, userID, slot+1)
+		if err != nil {
+			return fmt.Errorf("sticker: set pin: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("sticker: set pin: %w", err)
+		}
+		if affected == 0 {
+			return ErrNotFound
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sticker: commit pins: %w", err)
+	}
+	return nil
 }
