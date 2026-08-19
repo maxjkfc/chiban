@@ -20,12 +20,17 @@ cd "$(dirname "$0")/.."
 # the containers of whichever one the environment names, without saying so.
 status=0
 
-echo "== published ports in docker-compose.yml =="
+echo "== published ports in compose files =="
 # The parser below reads the short "host:port:port" form. The long form spreads
 # the address over `target:`/`published:` keys, which it would walk straight
 # past — under-checking while still printing a pass, which is the failure this
 # whole script exists to prevent. Refuse to guess.
-if grep -qE '^[[:space:]]*-[[:space:]]*target:' docker-compose.yml; then
+# Both files, because the deployment adds a service of its own and a port it
+# published to the world would be just as bad as one in the base file.
+compose_files=(docker-compose.yml)
+[ -f docker-compose.deploy.yml ] && compose_files+=(docker-compose.deploy.yml)
+
+if grep -qE '^[[:space:]]*-[[:space:]]*target:' "${compose_files[@]}"; then
 	echo "  long-form port syntax found; this script only reads the short form" >&2
 	echo "  refusing to report a result it did not actually check" >&2
 	exit 1
@@ -54,7 +59,7 @@ done < <(awk '/^[[:space:]]*ports:[[:space:]]*$/{inports=1; next}
 	/^[[:space:]]*#/{next}
 	/^[[:space:]]*$/{next}
 	/^[[:space:]]*-/{print; next}
-	{inports=0}' docker-compose.yml)
+	{inports=0}' "${compose_files[@]}")
 
 echo
 echo "== what is actually listening =="

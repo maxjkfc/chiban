@@ -7,6 +7,14 @@
 const baseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:18080";
 
+/**
+ * Where the browser reaches the API.
+ *
+ * An empty base means "wherever this page came from": the deployment puts the
+ * API and the site on one hostname and splits them by path, so the built image
+ * carries no domain in it and works on any of them. Local development sets an
+ * absolute base, because there the two really are on different ports.
+ */
 export function apiUrl(path: string): string {
   return `${baseUrl}${path}`;
 }
@@ -313,7 +321,15 @@ export async function uploadSticker(file: File): Promise<Sticker> {
 }
 
 export function chatSocketUrl(groupId: string): string {
-  return apiUrl(`/api/v1/ws/groups/${groupId}`).replace(/^http/, "ws");
+  const path = `/api/v1/ws/groups/${groupId}`;
+  if (baseUrl) return `${baseUrl}${path}`.replace(/^http/, "ws");
+
+  // Same-origin deployment: a relative path cannot be turned into a socket URL
+  // by string substitution, so it is built from the page's own address. That
+  // also picks wss automatically on an https page, which is the only thing
+  // that works behind the tunnel.
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}${path}`;
 }
 
 /** "2026-03-15T04:05:06Z" to "12:05" in the reader's own timezone. */

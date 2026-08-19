@@ -67,10 +67,12 @@ Migration 檔在 `apps/api/migrations/`，以 goose 格式撰寫並編譯進 bin
 目標環境是 Mac mini + Docker Compose + Cloudflare Tunnel：
 
 ```bash
-docker compose --profile tunnel up -d
+docker compose -f docker-compose.yml -f docker-compose.deploy.yml --profile tunnel up -d --build
 ```
 
-PostgreSQL 與 fake-gcs 不對外開放；只有 Cloudflare Tunnel 進得來。secrets 放 `.env`，不進 git。
+網站與 API 共用一個主機名，由 `deploy/Caddyfile` 依路徑分流（`/api/*` 給後端，其餘給前端）。因此沒有 CORS，前端 image 也不含任何網域。PostgreSQL 與 fake-gcs 不對外開放；只有 Cloudflare Tunnel 進得來。secrets 放 `.env`，不進 git。
+
+完整步驟、部署後檢查與備份排程見 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)。
 
 ## Repository
 
