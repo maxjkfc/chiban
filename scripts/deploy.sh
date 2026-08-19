@@ -67,21 +67,38 @@ echo
 echo "== build and start =="
 "${compose[@]}" up -d --build
 
+# curl prints its own `%{http_code}` even when there was no HTTP response at
+# all — `000` for a refused connection — so a `|| echo 000` fallback would
+# append a second one and produce `000000`. Let curl speak for itself and
+# swallow only its exit status.
+http_code() {
+	curl -s -o /dev/null -w '%{http_code}' "$1" || true
+}
+
+# Codes that mean nothing served the request: no response at all, or Caddy
+# answering for an upstream that is not there yet.
+not_answering() {
+	case "$1" in
+	000 | 502 | 503 | 504) return 0 ;;
+	esac
+	return 1
+}
+
 echo
 echo "== waiting for the API =="
 # The API applies migrations on startup, so "healthy" is also "migrated". A
 # fixed sleep would either be too short on a cold build or waste time on a warm
 # one, so this waits for the thing it actually depends on.
 deadline=$((SECONDS + 120))
-until curl -fsS -o /dev/null "http://127.0.0.1:${EDGE}/api/v1/auth/me" \
-	-w '%{http_code}' 2>/dev/null | grep -q . || [ "$SECONDS" -ge "$deadline" ]; do
+api_code=$(http_code "http://127.0.0.1:${EDGE}/api/v1/auth/me")
+while not_answering "$api_code" && [ "$SECONDS" -lt "$deadline" ]; do
 	sleep 2
+	api_code=$(http_code "http://127.0.0.1:${EDGE}/api/v1/auth/me")
 done
 # 401 is the healthy answer for an unauthenticated caller, so the check is that
 # the endpoint responds at all, not that it succeeds.
-api_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${EDGE}/api/v1/auth/me" || echo 000)
-if [ "$api_code" = "000" ]; then
-	echo "  the API never answered within 120s" >&2
+if not_answering "$api_code"; then
+	echo "  the API never answered within 120s (last code ${api_code})" >&2
 	echo
 	"${compose[@]}" logs --tail 40 api >&2
 	exit 1
@@ -96,14 +113,20 @@ echo "== migrations =="
 # for a specific column name instead would need editing on every migration and
 # would quietly stop checking the newest one.
 want=$(find apps/api/migrations -name '[0-9]*.sql' -exec basename {} \; |
-	sed -E 's/^0*([0-9]+)_.*/\1/' | sort -n | tail -1)
+	sed -E 's/^0*([0-9]+)_.*/\1/' | sort -n | tail -1 || true)
+# `|| true` on purpose: `set -e` with `pipefail` would otherwise kill the
+# script the moment psql exits non-zero — which is exactly the un-migrated
+# case, whose whole point is to be reported below rather than to abort here.
 got=$("${compose[@]}" exec -T postgres \
 	psql -U "$PG_USER" -d "$APP_DB" -tAc \
 	'SELECT coalesce(max(version_id), 0) FROM goose_db_version WHERE is_applied' 2>/dev/null |
-	tr -d '[:space:]')
+	tr -d '[:space:]' || true)
 
 if [ -z "$got" ]; then
 	echo "  FAILED    could not read goose_db_version from $APP_DB" >&2
+	status=1
+elif [ -z "$want" ]; then
+	echo "  FAILED    apps/api/migrations holds no numbered migration" >&2
 	status=1
 elif [ "$got" -lt "$want" ]; then
 	echo "  FAILED    database is at $got, this checkout needs $want" >&2
@@ -121,21 +144,29 @@ echo "== the site is serving this checkout's CSS =="
 # build as literal class names. Colour values do not: the production build
 # downlevels oklch() to a hex and a lab() fallback, so grepping the served CSS
 # for the source token finds nothing however correct the deployment is.
-markers=$(grep -oE '^@utility [a-z-]+' apps/web/app/globals.css | awk '{print $2}')
+markers=$(grep -oE '^@utility [a-z-]+' apps/web/app/globals.css | awk '{print $2}' || true)
 if [ -z "$markers" ]; then
 	echo "  SKIPPED   globals.css declares no @utility to look for" >&2
 	status=1
 else
+	# Same reason as the psql call above: an unanswered /login or an HTML page
+	# with no stylesheet in it must reach the report below, not abort the run.
 	href=$(curl -fsS "http://127.0.0.1:${EDGE}/login" |
-		grep -oE 'href="/_next/[^"]+\.css"' | sed -E 's/href="([^"]*)"/\1/' | head -1)
+		grep -oE 'href="/_next/[^"]+\.css"' | sed -E 's/href="([^"]*)"/\1/' | head -1 || true)
+	css=""
+	if [ -n "$href" ]; then
+		css=$(curl -fsS "http://127.0.0.1:${EDGE}${href}" || true)
+	fi
 	if [ -z "$href" ]; then
 		echo "  FAILED    /login references no stylesheet" >&2
 		status=1
+	elif [ -z "$css" ]; then
+		echo "  FAILED    $href served nothing" >&2
+		status=1
 	else
-		css=$(curl -fsS "http://127.0.0.1:${EDGE}${href}")
 		for marker in $markers; do
 			# The trailing class means `.tape` cannot be matched by `.tapered`.
-			if printf '%s' "$css" | grep -qE "\.${marker}[,{ ]"; then
+			if grep -qE "\.${marker}[,{ ]" <<<"$css"; then
 				echo "  ok        .$marker"
 			else
 				echo "  MISSING   .$marker — the web image is older than this checkout" >&2
@@ -150,7 +181,7 @@ echo "== path routing =="
 # One origin, split by path: the site on everything else, the API on /api/*.
 # Getting the site's HTML back from an /api/ URL means Caddy is sending API
 # traffic to the frontend, which fails much later and much more confusingly.
-site_code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${EDGE}/login" || echo 000)
+site_code=$(http_code "http://127.0.0.1:${EDGE}/login")
 if [ "$site_code" = "200" ]; then
 	echo "  ok        /login -> $site_code"
 else
