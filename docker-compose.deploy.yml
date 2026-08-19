@@ -1,0 +1,52 @@
+# Overrides for the Mac mini deployment behind Cloudflare Tunnel.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
+#     --profile tunnel up -d --build
+#
+# The domain itself is configured once in the Cloudflare dashboard and appears
+# nowhere in this repository, so nothing here needs editing when it changes.
+# See docs/DEPLOYMENT.md.
+services:
+  # One origin for the site and the API, split by path. The tunnel talks to
+  # this and to nothing else.
+  caddy:
+    image: caddy:2-alpine
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      # Loopback only, and only so the deployment can be checked from the Mac
+      # mini itself. Public traffic arrives through the tunnel, over the
+      # compose network, never through this.
+      - "127.0.0.1:${EDGE_PORT:-8090}:80"
+    depends_on:
+      - api
+      - web
+
+  web:
+    build:
+      args:
+        # Empty on purpose. The browser then addresses the API relative to the
+        # page it loaded, and Caddy sends /api/* to the API on that same
+        # origin. The built image therefore contains no domain at all: it does
+        # not need rebuilding when the domain changes, and it cannot silently
+        # keep pointing at somebody's localhost.
+        NEXT_PUBLIC_API_BASE_URL: ""
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ""
+
+  api:
+    environment:
+      # Cloudflare terminates TLS, so the session cookie must be Secure.
+      CHIBAN_SECURE_COOKIES: "true"
+      # Deliberately empty: the site and the API share one origin, so requests
+      # between them are not cross-origin and CORS never applies. With no
+      # pattern to match, the socket handshake falls back to requiring the
+      # Origin's host to equal the request's Host — which is exactly the rule
+      # a single origin wants, and one fewer place for the domain to be wrong.
+      CHIBAN_WEB_ORIGIN: ""
+
+  cloudflared:
+    # Only the edge is reachable, so a misconfigured hostname cannot expose the
+    # API or the site directly.
+    depends_on:
+      - caddy

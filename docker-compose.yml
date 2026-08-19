@@ -19,7 +19,12 @@ services:
 
   fake-gcs:
     image: fsouza/fake-gcs-server:1.52
-    command: ["-scheme", "http", "-port", "4443", "-backend", "filesystem", "-data", "/data"]
+    # -filesystem-root, not -data. `-data` only says where to LOAD existing
+    # data from at startup; writes go to -filesystem-root, which defaults to
+    # /storage. Pointing the volume at /data therefore persisted nothing and
+    # every upload lived in the container's writable layer until it was
+    # recreated.
+    command: ["-scheme", "http", "-port", "4443", "-backend", "filesystem", "-filesystem-root", "/data"]
     ports:
       # Loopback only: fake-gcs has no authentication of its own.
       - "127.0.0.1:${FAKE_GCS_PORT:-14443}:4443"
@@ -59,12 +64,19 @@ services:
     depends_on:
       - api
 
-  # Only started with `docker compose --profile tunnel up`, once a tunnel
-  # token exists. Local development does not need it.
+  # Only started with `--profile tunnel`. Local development does not need it.
+  #
+  # Configured from a file rather than a token: a token makes the tunnel
+  # remotely managed, which puts the routing in the Cloudflare dashboard where
+  # nothing reviews it and a wrong dropdown surfaces as a 502 with the reason
+  # buried in these logs. See deploy/cloudflared/config.yml.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
-    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./deploy/cloudflared:/etc/cloudflared:ro
+    restart: unless-stopped
     depends_on:
       - web
       - api

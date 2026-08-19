@@ -1,0 +1,29 @@
+# One origin for the whole product, split by path.
+#
+# Keeping the routing here rather than in the Cloudflare dashboard means the
+# rules are in the repository, reviewed like everything else, and identical on
+# a laptop and on the Mac mini. The tunnel then needs to know about exactly one
+# service, and the browser never sees more than one hostname — so there is no
+# CORS, no SameSite question, and no domain baked into the web image.
+#
+# Plain HTTP on purpose: TLS is terminated by Cloudflare, and this listener is
+# only ever reached over the compose network.
+:80 {
+	# The Go API owns /api/*, and nothing in the Next.js app claims that
+	# prefix. reverse_proxy upgrades WebSocket connections on its own and
+	# passes the original Host through, which is what the socket's origin
+	# check compares against.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# Cloudflare sits in front, so the client address arrives in a header.
+	# Without this every log line would say the tunnel connected to itself.
+	log {
+		format console
+	}
+}
