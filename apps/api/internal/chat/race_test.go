@@ -28,7 +28,7 @@ func TestAReactionCannotLandOnAMessageDeletedMeanwhile(t *testing.T) {
 	groupID := insertGroup(t, db, userID)
 	s := &store{db: db}
 
-	messageID, _, err := s.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil)
+	messageID, _, err := s.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -132,13 +132,13 @@ func TestAReactionThatLosesTheRaceIsReportedAsRefused(t *testing.T) {
 	groupID := insertGroup(t, db, userID)
 
 	plain := &store{db: db}
-	messageID, _, err := plain.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil)
+	messageID, _, err := plain.insertOrGet(ctx, groupID, userID, TypeText, "今天吃什麼", uuid.New(), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
 
 	racing := &deleteAfterRead{DBTX: db, db: db, messageID: messageID}
-	service := NewService(racing, alwaysMember{}, NewHub(), nil)
+	service := NewService(racing, alwaysMember{}, NewHub(), nil, noStickers{})
 
 	err = service.React(ctx, userID, messageID, Reactions[0])
 
@@ -177,4 +177,11 @@ type alwaysMember struct{}
 
 func (alwaysMember) IsMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
 	return true, nil
+}
+
+// noStickers stands in where the test never sends one.
+type noStickers struct{}
+
+func (noStickers) BelongsTo(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
 }

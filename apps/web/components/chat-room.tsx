@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
+import { ImageIcon, SendHorizonalIcon, SmileIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -14,6 +14,7 @@ import {
   ApiRequestError,
   chatMediaUrl,
   chatSocketUrl,
+  stickerUrl,
   timeOfDay,
   uploadChatMedia,
   type ChatMessage,
@@ -21,6 +22,7 @@ import {
   type MessagePage,
   type ReactionChange,
   type SocketEvent,
+  type Sticker,
   type User,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -182,6 +184,33 @@ type ChatRoomProps = {
   members: GroupMember[];
 };
 
+/**
+ * What a quote of a message reads as.
+ *
+ * Only a text message has anything to quote. A picture, a sticker and a meal
+ * card all store no content at all, so naming the kind is the entire preview —
+ * without it the quote is an empty box and the reply answers nothing.
+ */
+function quoteOf(parent: {
+  type: string;
+  content: string;
+  deleted?: boolean;
+}): string {
+  if (parent.deleted) return "（訊息已刪除）";
+  switch (parent.type) {
+    case "image":
+      return "圖片";
+    case "gif":
+      return "GIF";
+    case "sticker":
+      return "貼圖";
+    case "meal":
+      return "一餐的紀錄";
+    default:
+      return parent.content;
+  }
+}
+
 export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [before, setBefore] = useState<string | undefined>();
@@ -195,6 +224,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // at reply and reactions without a hover state or a long-press gesture.
   const [openActions, setOpenActions] = useState<string | null>(null);
   const [reactionTypes, setReactionTypes] = useState<string[]>([]);
+  // The picker's contents, loaded the first time it is opened rather than on
+  // every visit to a chat: most conversations never open it.
+  const [stickers, setStickers] = useState<Sticker[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
@@ -206,6 +239,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     mediaID: string;
     replyToID?: string;
   } | null>(null);
+  // The same rule as a text message, for stickers: an unconfirmed send keeps
+  // its id, so tapping the same sticker again after a lost response resolves
+  // to the message that already exists instead of posting a second one.
+  const pendingSticker = useRef<{ id: string; stickerID: string } | null>(null);
   // What is on screen, readable from a callback that must not depend on the
   // render it was created in. Only ever written by the effect below.
   const held = useRef<ChatMessage[]>([]);
@@ -522,6 +559,60 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setMessages((current) => merge(current, [sent], "newer"));
   }
 
+  // Opening the picker is what loads it. A library that fails to load says so
+  // rather than looking like an empty one, because "you have no stickers" and
+  // "we could not ask" lead to completely different next actions.
+  async function togglePicker() {
+    const opening = !pickerOpen;
+    setPickerOpen(opening);
+    if (!opening || stickers !== null) return;
+
+    try {
+      setStickers(await apiFetch<Sticker[]>("/api/v1/me/stickers"));
+    } catch {
+      setError("讀不到你的貼圖，稍後再試");
+      setPickerOpen(false);
+    }
+  }
+
+  async function handleSendSticker(stickerID: string) {
+    if (sending) return;
+
+    const clientMessageID =
+      pendingSticker.current?.stickerID === stickerID
+        ? pendingSticker.current.id
+        : crypto.randomUUID();
+    pendingSticker.current = { id: clientMessageID, stickerID };
+
+    setError(null);
+    setSending(true);
+    try {
+      const sent = await apiFetch<ChatMessage>(
+        `/api/v1/groups/${groupId}/messages`,
+        {
+          method: "POST",
+          body: {
+            client_message_id: clientMessageID,
+            sticker_id: stickerID,
+            reply_to_message_id: replyTo?.id,
+          },
+        },
+      );
+      pendingSticker.current = null;
+      setReplyTo(null);
+      setPickerOpen(false);
+      setMessages((current) => merge(current, [sent], "newer"));
+    } catch (caught) {
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "貼圖送不出去，再試一次",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function handleRetryAttachment() {
     const pendingAttachment = attachment.current;
     if (!pendingAttachment || sending) return;
@@ -682,9 +773,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                       {nameOf(message.reply_to.user_id)}
                     </span>
                     <span className="ms-1 line-clamp-2">
-                      {message.reply_to.deleted
-                        ? "（訊息已刪除）"
-                        : message.reply_to.content}
+                      {quoteOf(message.reply_to)}
                     </span>
                   </blockquote>
                 ) : null}
@@ -693,6 +782,28 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                   <p className="text-muted-foreground rounded-2xl border border-dashed px-3 py-2 text-sm italic">
                     （訊息已刪除）
                   </p>
+                ) : message.sticker_id ? (
+                  // A sticker sits on the page without a bubble: it is the
+                  // whole message, and a border around it would make it look
+                  // like an attachment. Tapping still opens the actions, so
+                  // reply and reaction work on one like on anything else.
+                  <button
+                    type="button"
+                    aria-expanded={openActions === message.id}
+                    onClick={() =>
+                      setOpenActions((open) =>
+                        open === message.id ? null : message.id,
+                      )
+                    }
+                    className="cursor-pointer"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={stickerUrl(message.sticker_id)}
+                      alt="貼圖"
+                      className="size-32 object-contain"
+                    />
+                  </button>
                 ) : message.chat_media_id ? (
                   // An image is still an ordinary message: tapping it opens
                   // the same actions as any other, so reply and reaction work
@@ -806,9 +917,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                     {message.meal_record_id ? (
                       // The card itself is the tap target for reacting, so
                       // opening the meal lives here rather than as a link
-                      // nested inside that button. Styled as a button rather
-                      // than rendered through one: Button's asChild path
-                      // passes Slot more than one child and throws.
+                      // nested inside that button. Styled through
+                      // buttonVariants, the same as the record links on the
+                      // Today page.
                       <Link
                         href={`/meals/${message.meal_record_id}`}
                         className={buttonVariants({
@@ -861,7 +972,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             {nameOf(replyTo.user_id)}
           </span>
           <span className="text-muted-foreground line-clamp-1 flex-1">
-            {replyTo.content}
+            {quoteOf(replyTo)}
           </span>
           <Button
             variant="ghost"
@@ -871,6 +982,46 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           >
             <XIcon aria-hidden />
           </Button>
+        </div>
+      ) : null}
+
+      {pickerOpen ? (
+        <div className="mx-4 rounded-2xl border p-3">
+          {stickers === null ? (
+            <p className="text-muted-foreground text-xs">載入中…</p>
+          ) : stickers.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              還沒有貼圖。到{" "}
+              <Link href="/profile/stickers" className="underline">
+                我的貼圖
+              </Link>{" "}
+              上傳第一張。
+            </p>
+          ) : (
+            <ul className="grid grid-cols-4 gap-2">
+              {stickers.map((sticker) => (
+                <li key={sticker.id}>
+                  {/* One tap sends. A picker that needed a second confirming
+                      tap would be slower than typing, which is the one thing
+                      a sticker has to beat. */}
+                  <button
+                    type="button"
+                    disabled={sending}
+                    onClick={() => handleSendSticker(sticker.id)}
+                    className="cursor-pointer disabled:opacity-50"
+                    aria-label="傳送這個貼圖"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={stickerUrl(sticker.id)}
+                      alt=""
+                      className="aspect-square w-full object-contain"
+                    />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : null}
 
@@ -893,6 +1044,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             onChange={handleAttach}
           />
         </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          aria-expanded={pickerOpen}
+          onClick={togglePicker}
+        >
+          <SmileIcon aria-hidden />
+          <span className="sr-only">貼圖</span>
+        </Button>
         <Input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}

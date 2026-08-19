@@ -213,6 +213,8 @@ export type ChatMessage = {
   /** Set on an image or GIF message. The bytes are read through the media
    * endpoint, which decides who may see them. */
   chat_media_id?: string;
+  /** Set on a sticker message. Like the two above it is only a reference. */
+  sticker_id?: string;
   reply_to?: ReplyPreview;
   reactions: MessageReaction[];
 };
@@ -221,6 +223,9 @@ export type ChatMessage = {
 export type ReplyPreview = {
   id: string;
   user_id: string;
+  /** What the quoted message was. Only text carries content, so this is the
+   * whole preview for a picture, a sticker or a meal card. */
+  type: string;
   content: string;
   deleted: boolean;
 };
@@ -279,6 +284,32 @@ export async function uploadChatMedia(file: File): Promise<ChatMedia> {
     throw new ApiRequestError(response.status, detail?.field, detail?.error);
   }
   return (await response.json()) as ChatMedia;
+}
+
+export function stickerUrl(stickerId: string): string {
+  return apiUrl(`/api/v1/stickers/${stickerId}/media`);
+}
+
+export type Sticker = {
+  id: string;
+  type: "image" | "gif";
+};
+
+/** Adds one sticker to the caller's own library. */
+export async function uploadSticker(file: File): Promise<Sticker> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await fetch(apiUrl("/api/v1/me/stickers"), {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => null)) as ApiError | null;
+    throw new ApiRequestError(response.status, detail?.field, detail?.error);
+  }
+  return (await response.json()) as Sticker;
 }
 
 export function chatSocketUrl(groupId: string): string {

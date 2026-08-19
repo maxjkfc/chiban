@@ -27,6 +27,8 @@ type sendMessageRequest struct {
 	ReplyToMessageID string `json:"reply_to_message_id"`
 	// Optional: posts an already-uploaded image or GIF instead of text.
 	ChatMediaID string `json:"chat_media_id"`
+	// Optional: posts one of the sender's own stickers instead of text.
+	StickerID string `json:"sticker_id"`
 }
 
 type messageResponse struct {
@@ -45,15 +47,20 @@ type messageResponse struct {
 	MealRecordID string `json:"meal_record_id,omitempty"`
 	// Set on an image or GIF message; the bytes are read from the media
 	// endpoint, which decides who may see them.
-	ChatMediaID string         `json:"chat_media_id,omitempty"`
-	ReplyTo     *replyResponse `json:"reply_to,omitempty"`
+	ChatMediaID string `json:"chat_media_id,omitempty"`
+	// Set on a sticker message; the bytes are read from the sticker endpoint.
+	StickerID string         `json:"sticker_id,omitempty"`
+	ReplyTo   *replyResponse `json:"reply_to,omitempty"`
 	// Always present, so the client never has to guard against null.
 	Reactions []reactionResponse `json:"reactions"`
 }
 
 type replyResponse struct {
-	ID      string `json:"id"`
-	UserID  string `json:"user_id"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// Type lets the client say what is being quoted when there is no text to
+	// quote — a picture, a sticker or a meal card all store empty content.
+	Type    string `json:"type"`
 	Content string `json:"content"`
 	Deleted bool   `json:"deleted"`
 }
@@ -125,10 +132,14 @@ func newMessageResponse(m chat.Message) messageResponse {
 	if m.ChatMediaID != nil {
 		out.ChatMediaID = m.ChatMediaID.String()
 	}
+	if m.StickerID != nil {
+		out.StickerID = m.StickerID.String()
+	}
 	if m.ReplyTo != nil {
 		out.ReplyTo = &replyResponse{
 			ID:      m.ReplyTo.ID.String(),
 			UserID:  m.ReplyTo.UserID.String(),
+			Type:    m.ReplyTo.Type,
 			Content: m.ReplyTo.Content,
 			Deleted: m.ReplyTo.Deleted,
 		}
@@ -190,11 +201,23 @@ func sendMessageHandler(d Deps) http.HandlerFunc {
 			chatMediaID = &parsed
 		}
 
+		var stickerID *uuid.UUID
+		if req.StickerID != "" {
+			parsed, err := uuid.Parse(req.StickerID)
+			if err != nil {
+				writeError(w, http.StatusBadRequest,
+					"sticker_id must be a UUID", "sticker_id")
+				return
+			}
+			stickerID = &parsed
+		}
+
 		message, err := d.Chat.Send(r.Context(), auth.UserFromContext(r.Context()).ID, groupID, chat.SendInput{
 			Content:          req.Content,
 			ClientMessageID:  clientMessageID,
 			ReplyToMessageID: replyTo,
 			ChatMediaID:      chatMediaID,
+			StickerID:        stickerID,
 		})
 		if err != nil {
 			writeChatError(w, d, err)

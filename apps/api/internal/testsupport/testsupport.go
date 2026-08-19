@@ -526,6 +526,7 @@ type Message struct {
 	ClientMessageID string     `json:"client_message_id"`
 	MealRecordID    string     `json:"meal_record_id"`
 	ChatMediaID     string     `json:"chat_media_id"`
+	StickerID       string     `json:"sticker_id"`
 	CreatedAt       string     `json:"created_at"`
 	Deleted         bool       `json:"deleted"`
 	ReplyTo         *ReplyTo   `json:"reply_to"`
@@ -536,6 +537,7 @@ type Message struct {
 type ReplyTo struct {
 	ID      string `json:"id"`
 	UserID  string `json:"user_id"`
+	Type    string `json:"type"`
 	Content string `json:"content"`
 	Deleted bool   `json:"deleted"`
 }
@@ -906,4 +908,95 @@ func (a *App) ReadChatMedia(mediaID string) *http.Response {
 	a.t.Helper()
 
 	return a.Request(http.MethodGet, "/api/v1/chat-media/"+mediaID, nil)
+}
+
+// Sticker is one entry in a user's library, as the API returns it.
+type Sticker struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+}
+
+// PostSticker uploads one sticker and returns the raw response, so tests can
+// assert on rejections as well as successes.
+func (a *App) PostSticker(data []byte, filename string) *http.Response {
+	a.t.Helper()
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	part, err := form.CreateFormFile("file", filename)
+	if err != nil {
+		a.t.Fatalf("create file part: %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		a.t.Fatalf("write file: %v", err)
+	}
+	if err := form.Close(); err != nil {
+		a.t.Fatalf("close form: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(a.t.Context(), http.MethodPost,
+		a.BaseURL+"/api/v1/me/stickers", &body)
+	if err != nil {
+		a.t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", form.FormDataContentType())
+
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		a.t.Fatalf("upload sticker: %v", err)
+	}
+	a.t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// AddSticker uploads a sticker and fails the test unless it was accepted.
+func (a *App) AddSticker(data []byte, filename string) Sticker {
+	a.t.Helper()
+
+	resp := a.PostSticker(data, filename)
+	if resp.StatusCode != http.StatusCreated {
+		a.t.Fatalf("add sticker: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var one Sticker
+	a.DecodeJSON(resp, &one)
+	return one
+}
+
+// ListStickers returns the current user's library.
+func (a *App) ListStickers() []Sticker {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/me/stickers", nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("list stickers: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var stickers []Sticker
+	a.DecodeJSON(resp, &stickers)
+	return stickers
+}
+
+// DeleteSticker removes one from the current user's library.
+func (a *App) DeleteSticker(stickerID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodDelete, "/api/v1/me/stickers/"+stickerID, nil)
+}
+
+// SendSticker posts one of the caller's stickers into a group.
+func (a *App) SendSticker(groupID, stickerID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/messages", map[string]string{
+		"client_message_id": uuid.NewString(),
+		"sticker_id":        stickerID,
+	})
+}
+
+// ReadSticker fetches a sticker's bytes as the current user.
+func (a *App) ReadSticker(stickerID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodGet, "/api/v1/stickers/"+stickerID+"/media", nil)
 }

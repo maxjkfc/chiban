@@ -27,7 +27,9 @@ type store struct {
 const messageQuery = `
 	SELECT m.id, m.group_id, m.user_id, m.message_type, coalesce(m.content, ''),
 	       m.client_message_id, m.created_at, m.deleted_at, m.meal_record_id, m.chat_media_id,
-	       parent.id, parent.user_id, coalesce(parent.content, ''), parent.deleted_at
+	       m.sticker_id,
+	       parent.id, parent.user_id, parent.message_type,
+	       coalesce(parent.content, ''), parent.deleted_at
 	FROM chat_messages m
 	LEFT JOIN chat_messages parent ON parent.id = m.reply_to_message_id`
 
@@ -43,15 +45,17 @@ func scanMessage(row scanner) (Message, error) {
 		deletedAt  sql.NullTime
 		mealID     uuid.NullUUID
 		chatMedia  uuid.NullUUID
+		sticker    uuid.NullUUID
 		parentID   uuid.NullUUID
 		parentUser uuid.NullUUID
+		parentType sql.NullString
 		parentText string
 		parentGone sql.NullTime
 	)
 
 	if err := row.Scan(&m.ID, &m.GroupID, &m.UserID, &m.Type, &m.Content,
-		&m.ClientMessageID, &m.CreatedAt, &deletedAt, &mealID, &chatMedia,
-		&parentID, &parentUser, &parentText, &parentGone); err != nil {
+		&m.ClientMessageID, &m.CreatedAt, &deletedAt, &mealID, &chatMedia, &sticker,
+		&parentID, &parentUser, &parentType, &parentText, &parentGone); err != nil {
 		return Message{}, err
 	}
 
@@ -64,6 +68,9 @@ func scanMessage(row scanner) (Message, error) {
 	if mealID.Valid {
 		m.MealRecordID = &mealID.UUID
 	}
+	if sticker.Valid {
+		m.StickerID = &sticker.UUID
+	}
 	if chatMedia.Valid {
 		m.ChatMediaID = &chatMedia.UUID
 	}
@@ -71,6 +78,7 @@ func scanMessage(row scanner) (Message, error) {
 		preview := ReplyPreview{
 			ID:      parentID.UUID,
 			UserID:  parentUser.UUID,
+			Type:    parentType.String,
 			Content: parentText,
 			Deleted: parentGone.Valid,
 		}
@@ -93,18 +101,18 @@ func (s *store) insertOrGet(
 	groupID, userID uuid.UUID,
 	messageType, content string,
 	clientMessageID uuid.UUID,
-	replyTo, chatMediaID *uuid.UUID,
+	replyTo, chatMediaID, stickerID *uuid.UUID,
 ) (uuid.UUID, bool, error) {
 	var id uuid.UUID
 
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO chat_messages
 			(group_id, user_id, message_type, content, client_message_id,
-			 reply_to_message_id, chat_media_id)
-		VALUES ($1, $2, $3, nullif($4, ''), $5, $6, $7)
+			 reply_to_message_id, chat_media_id, sticker_id)
+		VALUES ($1, $2, $3, nullif($4, ''), $5, $6, $7, $8)
 		ON CONFLICT (user_id, client_message_id) DO NOTHING
 		RETURNING id
-	`, groupID, userID, messageType, content, clientMessageID, replyTo, chatMediaID).Scan(&id)
+	`, groupID, userID, messageType, content, clientMessageID, replyTo, chatMediaID, stickerID).Scan(&id)
 	if err == nil {
 		return id, true, nil
 	}

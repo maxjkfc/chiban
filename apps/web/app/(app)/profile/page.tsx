@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -86,13 +87,17 @@ export default function ProfilePage() {
         body: form,
       });
       if (!response.ok) {
-        const detail = (await response.json().catch(() => null)) as { error?: string } | null;
+        const detail = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
         throw new ApiRequestError(response.status, undefined, detail?.error);
       }
       setProfile((await response.json()) as Profile);
     } catch (caught) {
       setAvatarError(
-        caught instanceof ApiRequestError ? caught.message : "無法連線，請稍後再試",
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
       );
     } finally {
       setUploadingAvatar(false);
@@ -142,7 +147,9 @@ export default function ProfilePage() {
                 onChange={handleAvatar}
               />
             </label>
-            <p className="text-muted-foreground text-xs">可以略過，之後再設定。</p>
+            <p className="text-muted-foreground text-xs">
+              可以略過，之後再設定。
+            </p>
           </div>
         </div>
       ) : null}
@@ -185,6 +192,13 @@ export default function ProfilePage() {
       ) : (
         <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
       )}
+
+      <Link
+        href="/profile/stickers"
+        className={buttonVariants({ variant: "outline" })}
+      >
+        我的貼圖
+      </Link>
 
       <Button variant="outline" onClick={handleLogout}>
         登出

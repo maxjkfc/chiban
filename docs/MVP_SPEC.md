@@ -647,7 +647,6 @@ user_stickers
 -------------
 id
 user_id
-name nullable
 media_type
 bucket
 object_name
@@ -656,6 +655,9 @@ size_bytes
 created_at
 deleted_at nullable
 ```
+
+`name` 原本列在這裡，V0.1 不做：貼圖只用看的挑，沒有搜尋也沒有分類，
+一個沒有任何介面會顯示或編輯的欄位就是死重量。要做命名時再加欄位。
 
 V0.1 支援：
 

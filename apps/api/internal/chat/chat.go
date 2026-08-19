@@ -62,6 +62,11 @@ const (
 	// media endpoint, which decides who may see them.
 	TypeImage = "image"
 	TypeGIF   = "gif"
+	// TypeSticker is one of the sender's own stickers. It carries only the
+	// sticker id; the bytes come from the sticker endpoint, and an image
+	// sticker and a GIF sticker are the same kind of message because what a
+	// reader does with either is identical.
+	TypeSticker = "sticker"
 
 	maxContentLength = 2000
 	// DefaultPageSize matches what a phone screen can show without the first
@@ -83,6 +88,8 @@ type Message struct {
 	Deleted bool
 	// ChatMediaID is the upload an image or GIF message shows.
 	ChatMediaID *uuid.UUID
+	// StickerID is the sticker a sticker message shows.
+	StickerID *uuid.UUID
 	// MealRecordID is what a meal card points at. The card's contents are
 	// fetched from the meal itself, so they cannot drift from it or outlive it.
 	MealRecordID *uuid.UUID
@@ -98,8 +105,12 @@ type Message struct {
 
 // ReplyPreview is as much of the parent as a quote needs.
 type ReplyPreview struct {
-	ID      uuid.UUID
-	UserID  uuid.UUID
+	ID     uuid.UUID
+	UserID uuid.UUID
+	// Type is what the parent was. Only a text message has content to quote;
+	// every other kind stores none, so without this a quote of one is an empty
+	// box and the reply reads as an answer to nothing.
+	Type    string
 	Content string
 	Deleted bool
 }
@@ -163,6 +174,8 @@ type SendInput struct {
 	// upload happens first and separately, so a failed send never leaves a
 	// half-written message pointing at nothing.
 	ChatMediaID *uuid.UUID
+	// StickerID posts one of the sender's own stickers instead of text.
+	StickerID *uuid.UUID
 }
 
 // Membership answers whether a user belongs to a group. The group domain
@@ -172,15 +185,35 @@ type Membership interface {
 	IsMember(ctx context.Context, userID, groupID uuid.UUID) (bool, error)
 }
 
-type Service struct {
-	store   *store
-	members Membership
-	hub     *Hub
-	objects storage.ObjectStorage
+// Stickers answers whether a sticker is the sender's to send. The sticker
+// domain implements it; keeping it an interface here means chat never reads
+// the sticker table it does not own.
+type Stickers interface {
+	BelongsTo(ctx context.Context, stickerID, userID uuid.UUID) (bool, error)
 }
 
-func NewService(db DBTX, members Membership, hub *Hub, objects storage.ObjectStorage) *Service {
-	return &Service{store: &store{db: db}, members: members, hub: hub, objects: objects}
+type Service struct {
+	store    *store
+	members  Membership
+	hub      *Hub
+	objects  storage.ObjectStorage
+	stickers Stickers
+}
+
+func NewService(
+	db DBTX,
+	members Membership,
+	hub *Hub,
+	objects storage.ObjectStorage,
+	stickers Stickers,
+) *Service {
+	return &Service{
+		store:    &store{db: db},
+		members:  members,
+		hub:      hub,
+		objects:  objects,
+		stickers: stickers,
+	}
 }
 
 // Send stores a message and then hands the stored row to everyone connected.
@@ -197,7 +230,32 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 	messageType := TypeText
 	content := strings.TrimSpace(in.Content)
 
-	if in.ChatMediaID != nil {
+	if in.ChatMediaID != nil && in.StickerID != nil {
+		// One message shows one thing. Allowing both would make the message
+		// type a guess about which of them the reader is meant to see.
+		return Message{}, InvalidInputError{
+			Field:   "sticker_id",
+			Message: "cannot be sent together with an upload",
+		}
+	}
+
+	switch {
+	case in.StickerID != nil:
+		// The sticker has to be the sender's own and still in their library.
+		// Sending someone else's would let anyone paste any sticker id.
+		mine, err := s.stickers.BelongsTo(ctx, *in.StickerID, userID)
+		if err != nil {
+			return Message{}, fmt.Errorf("chat: check sticker: %w", err)
+		}
+		if !mine {
+			return Message{}, InvalidInputError{
+				Field:   "sticker_id",
+				Message: "is not one of your stickers",
+			}
+		}
+		messageType = TypeSticker
+		content = ""
+	case in.ChatMediaID != nil:
 		// The upload has to be the sender's own. Posting someone else's would
 		// widen who can read it to a group its uploader never chose.
 		mediaType, err := s.store.findOwnedMedia(ctx, *in.ChatMediaID, userID)
@@ -214,7 +272,7 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		// client: a GIF posted as an image would be re-encoded on the way out.
 		messageType = mediaType
 		content = ""
-	} else {
+	default:
 		if content == "" {
 			return Message{}, InvalidInputError{Field: "content", Message: "is required"}
 		}
@@ -248,7 +306,7 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 	}
 
 	id, inserted, err := s.store.insertOrGet(ctx, groupID, userID, messageType, content,
-		in.ClientMessageID, in.ReplyToMessageID, in.ChatMediaID)
+		in.ClientMessageID, in.ReplyToMessageID, in.ChatMediaID, in.StickerID)
 	if err != nil {
 		return Message{}, err
 	}
