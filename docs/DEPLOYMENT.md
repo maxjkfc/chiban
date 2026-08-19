@@ -14,29 +14,33 @@
 
 - 網站與 API 同源，所以沒有 CORS，session cookie 也不必處理 SameSite 的跨站規則。
 - `NEXT_PUBLIC_API_BASE_URL` 是空的，前端用相對路徑，所以**建出來的 image 不含任何網域**——換網域不必重建。
-- Cloudflare 儀表板只要設一個 public hostname，不必維護多條 ingress 規則。
+- Cloudflare 儀表板上什麼都不用設：tunnel 的路由在 `deploy/cloudflared/config.yml`，跟著 repo 走。
 
 `postgres` 與 `fake-gcs` 沒有自己的認證，只在 compose 網路裡；`caddy` 也只發布到 `127.0.0.1`，公開流量一律走 tunnel。
 
 ## 一次性設定
 
-### 1. 建立 tunnel 並取得 token
+tunnel 走**本機設定**而不是 token。差別在於路由規則放哪裡：token 模式的 ingress 在 Cloudflare 儀表板上，不進 repo、沒有人 review、也沒有 git 歷史；本機模式的 ingress 是 `deploy/cloudflared/config.yml` 裡的一行。
 
-在 Cloudflare Zero Trust → Networks → Tunnels 建一個 tunnel，選 **Cloudflared**，複製它給的 token（`eyJ...` 那一長串）。
+這不是潔癖。實際發生過：儀表板上 Type 那格選成 HTTPS，cloudflared 就對著 Caddy 的純 HTTP listener 發 TLS 握手，整站 502，而真正的原因（`tls: first record does not look like a TLS handshake`）埋在容器日誌裡。本機模式沒有那一格可以選錯——`service: http://caddy:80` 就寫在眼前。
 
-### 2. 設定 public hostname
+### 1. 登入（每個帳號一次）
 
-在同一個 tunnel 的 **Public Hostname** 分頁新增一筆：
+```bash
+cloudflared tunnel login
+```
 
-| 欄位 | 值 |
-|---|---|
-| Subdomain / Domain | 你的網域，例如 `chiban.example.com` |
-| Type | `HTTP` |
-| URL | `caddy:80` |
+會開瀏覽器要你選網域授權，之後憑證放在 `~/.cloudflared/cert.pem`。
 
-只要這一筆。路徑分流由 Caddy 處理，不要在這裡加第二條規則。
+### 2. 建立 tunnel 與 DNS
 
-Type 是 `HTTP` 而不是 `HTTPS`：TLS 已經在 Cloudflare 終止，tunnel 到 caddy 這段走的是 compose 內部網路。
+```bash
+scripts/setup-tunnel.sh chiban.example.com
+```
+
+這支腳本會建立（或沿用）tunnel、取下憑證 JSON、產生 `deploy/cloudflared/config.yml`、把 DNS CNAME 指過來。重跑是安全的：既有的 tunnel 與憑證會沿用，不會建出第二個。
+
+憑證 JSON 是 tunnel 的鑰匙，`.gitignore` 已經擋掉；`config.yml` 則會進 git，那正是重點。
 
 ### 3. 填 `.env`
 
@@ -44,13 +48,7 @@ Type 是 `HTTP` 而不是 `HTTPS`：TLS 已經在 Cloudflare 終止，tunnel 到
 cp .env.example .env
 ```
 
-需要改的只有一項：
-
-```env
-CLOUDFLARE_TUNNEL_TOKEN=eyJ...
-```
-
-`POSTGRES_PASSWORD` 也請改掉，別用預設值。其餘（網域、cookie、CORS）由 `docker-compose.deploy.yml` 處理，不需要在 `.env` 裡出現。
+把 `POSTGRES_PASSWORD` 改掉，別用預設值。網域、cookie、CORS、tunnel 設定都不在 `.env` 裡——分別由 `docker-compose.deploy.yml` 與 `deploy/cloudflared/config.yml` 處理。
 
 ## 啟動
 
