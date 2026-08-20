@@ -1,9 +1,11 @@
 // Package media validates and normalises uploaded images.
 //
 // Every upload in the product — meal photos, chat images, stickers, avatars —
-// goes through Sanitize. Nothing is stored as the client sent it: static
-// images are decoded and re-encoded, which is also what removes EXIF and GPS
-// metadata, and animated GIFs take a separate path that keeps every frame.
+// goes through Sanitize. Nothing is stored as the client sent it: still images
+// are decoded and re-encoded as JPEG, which is also what removes EXIF and GPS
+// metadata and what makes an iPhone's HEIC readable by every browser, and
+// animated GIFs take a separate path that keeps every frame.
+
 package media
 
 import (
@@ -18,7 +20,21 @@ import (
 	_ "image/png"
 
 	"github.com/disintegration/imaging"
+	"github.com/gen2brain/heic"
 )
+
+// A phone shooting in High Efficiency hands Safari the HEIC straight out of
+// the camera roll, so refusing the format would mean refusing the default
+// iPhone photo. The decoder is a Rust HEVC implementation compiled to WASM:
+// no cgo, which the static distroless build requires, and untrusted frames
+// are decoded inside the sandbox rather than by a C library in-process.
+//
+// The package would otherwise prefer a system libheif when one happens to be
+// installed. Forcing WASM keeps a developer's Homebrew libheif from being a
+// different decoder than production's, where none exists.
+func init() {
+	heic.ForceWasmMode = true
+}
 
 // InvalidInputError describes an upload the user can fix.
 type InvalidInputError struct {
@@ -72,7 +88,8 @@ type Sanitized struct {
 	Height      int
 }
 
-// Sanitize accepts a still photo — JPEG or PNG — and returns what to store.
+// Sanitize accepts a still photo — JPEG, PNG or HEIC — and returns what to
+// store.
 //
 // The declared filename and Content-Type are ignored: only what actually
 // decodes counts. Animated GIFs are rejected here; chat media and stickers use
@@ -106,10 +123,10 @@ func sanitize(data []byte, allowGIF bool) (Sanitized, error) {
 	// BMP arrive that way — and silently accepting them would run decoders
 	// this product never chose to depend on.
 	switch {
-	case format == "jpeg" || format == "png":
+	case format == "jpeg" || format == "png" || format == "heic":
 	case format == "gif" && allowGIF:
 	default:
-		return Sanitized{}, InvalidInputError{Message: "file must be a JPEG or PNG image"}
+		return Sanitized{}, InvalidInputError{Message: "file must be a JPEG, PNG or HEIC image"}
 	}
 
 	if config.Width > MaxSourceDimension || config.Height > MaxSourceDimension {
@@ -271,12 +288,17 @@ func skipSubBlocks(data []byte, at int) (int, error) {
 	}
 }
 
-// sanitizeStill decodes, applies the EXIF orientation and re-encodes as JPEG.
+// sanitizeStill decodes, applies the recorded orientation and re-encodes as
+// JPEG.
 //
 // Re-encoding from the decoded pixels is what strips EXIF and GPS: none of the
 // original metadata survives the round trip. Applying the orientation first
 // matters because dropping the tag without rotating would leave every portrait
 // phone photo lying on its side.
+//
+// AutoOrientation only reads the EXIF tag out of a JPEG. HEIC states its
+// rotation in the container instead and the decoder has already applied it, so
+// the two never fight over the same image.
 func sanitizeStill(data []byte) (Sanitized, error) {
 	img, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
