@@ -71,6 +71,7 @@ func addStickerHandler(d Deps) http.HandlerFunc {
 
 		added, err := d.Sticker.Add(r.Context(), auth.UserFromContext(r.Context()).ID, data)
 		if err != nil {
+			logFailedUpload(r, d, "file", err)
 			writeStickerError(w, d, err)
 			return
 		}

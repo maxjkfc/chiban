@@ -198,3 +198,22 @@ func writeError(w http.ResponseWriter, status int, message string, field ...stri
 	}
 	writeJSON(w, status, body)
 }
+
+// logFailedUpload records what the client claimed about files that never made
+// it into storage.
+//
+// A phone's camera roll is the one input this product cannot reproduce
+// locally, and every rejection reaches the user as the same "it failed". A
+// HEIC, a ProRAW DNG and a photo iCloud never finished downloading are three
+// different bugs; the declared name, type and size tell them apart without a
+// round of guessing. The bytes themselves are never logged.
+func logFailedUpload(r *http.Request, d Deps, field string, err error) {
+	for _, header := range r.MultipartForm.File[field] {
+		d.Logger.WarnContext(r.Context(), "upload not stored",
+			"field", field,
+			"filename", header.Filename,
+			"declared_type", header.Header.Get("Content-Type"),
+			"bytes", header.Size,
+			"reason", err)
+	}
+}
