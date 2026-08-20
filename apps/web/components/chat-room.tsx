@@ -1,6 +1,11 @@
 "use client";
 
-import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ImageIcon,
+  SendHorizonalIcon,
+  XIcon,
+} from "lucide-react";
 import Link from "next/link";
 import {
   useCallback,
@@ -251,6 +256,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // Whether the reader is still at the newest message. Starts true so the first
   // page lands at the bottom; only a scroll ever changes it.
   const following = useRef(true);
+  // The newest message the reader has actually been shown. Anything after it in
+  // the list is what the unread pill counts. Undefined until the first page
+  // lands, when the follow effect below sets it.
+  const [seen, setSeen] = useState<string | undefined>(undefined);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
   const pending = useRef<{ id: string; content: string } | null>(null);
@@ -473,9 +482,21 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const newestIsMine = !!me && messages.at(-1)?.user_id === me.id;
   useEffect(() => {
     const el = scroller.current;
-    if (el && (following.current || newestIsMine)) el.scrollTop = el.scrollHeight;
+    if (!el || !(following.current || newestIsMine)) return;
+    el.scrollTop = el.scrollHeight;
+    setSeen(newest);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newest]);
+
+  // What arrived while the reader was up in the history. Derived from the last
+  // message they were carried to rather than accumulated in a counter: a
+  // counter has to be right about every path that adds messages — a socket
+  // event, a reconnect replaying a page, a send — and drifts the first time one
+  // of them is missed.
+  const unread =
+    seen === undefined || seen === newest
+      ? 0
+      : Math.max(0, messages.length - 1 - messages.findIndex((m) => m.id === seen));
 
   // A page of older messages is inserted above the reader, which would push
   // what they were reading down by the height of the whole page — at the top of
@@ -784,12 +805,25 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   }
 
   // Reading history means the reader stops being carried to the bottom; coming
-  // back down opts them in again. Cheap enough to run on every scroll event:
-  // three layout reads and a comparison, no state and so no render.
+  // back down opts them in again and marks everything below as read.
+  //
+  // Runs on every scroll event, which is fine: three layout reads and a
+  // comparison. The state update is a no-op React discards whenever the id has
+  // not changed, so scrolling around at the bottom does not re-render.
   function handleScroll(event: React.UIEvent<HTMLDivElement>) {
     const el = event.currentTarget;
-    following.current =
+    const atBottom =
       el.scrollHeight - el.clientHeight - el.scrollTop < followSlack;
+    following.current = atBottom;
+    if (atBottom) setSeen(newest);
+  }
+
+  // The pill's job: put the reader back on the newest message.
+  function handleJumpToNewest() {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    following.current = true;
+    setSeen(newest);
   }
 
   return (
@@ -1045,6 +1079,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           );
         })}
       </ol>
+      </div>
+
+      {/* A zero-height anchor, so the pill can float over the conversation
+          without taking a row from it. It sits between the scroller and
+          everything below, which is why `bottom-2` lands just above whatever
+          the composer currently is — an error, a reply preview, the sticker
+          tray — instead of needing to know how tall that stack got. */}
+      <div className="relative" role="status" aria-live="polite">
+        {unread > 0 ? (
+          <Button
+            size="sm"
+            onClick={handleJumpToNewest}
+            className="absolute bottom-2 left-1/2 -translate-x-1/2"
+          >
+            <ArrowDownIcon aria-hidden />
+            {unread} 則新訊息
+          </Button>
+        ) : null}
       </div>
 
       {error ? (
