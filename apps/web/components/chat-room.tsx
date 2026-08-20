@@ -250,6 +250,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  // iOS Safari never resizes the layout viewport for the on-screen keyboard
+  // and never stops "helpfully" panning the page to keep the focused input
+  // clear of it, even though the composer's ancestors are all
+  // `overflow: hidden` - WebKit does this regardless of CSS overflow. The
+  // only element it leaves alone is one already taken out of that flow, so
+  // the composer bar is `position: fixed` and tracks `visualViewport`
+  // itself instead of asking the browser to keep it in view.
+  const composerBar = useRef<HTMLDivElement>(null);
+  const [composerOffset, setComposerOffset] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(0);
   // What the reader is looking at while they are not being carried along: an
   // element and how far below the scroller's top edge it sat. Content growing
   // anywhere outside it — a prepended page, a picture finishing its decode —
@@ -617,6 +627,42 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     observer.observe(list);
     return () => observer.disconnect();
   }, [restoreAnchor, scrollToOffset]);
+
+  // How far the composer bar needs to sit above the true bottom of the
+  // window: 0 with no keyboard, the keyboard's height once one covers part
+  // of the visual viewport. `offsetTop` also matters - iOS pans the visual
+  // viewport rather than resizing it, so the covered strip is the gap on
+  // both ends, not just `innerHeight - height`.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function apply() {
+      setComposerOffset(
+        Math.max(0, window.innerHeight - vv!.height - vv!.offsetTop),
+      );
+    }
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+    };
+  }, []);
+
+  // Taken out of flow, the composer bar no longer reserves its own space:
+  // without this the last message would sit underneath it. Its height
+  // changes with what's in it - a reply preview, an error, a picture upload
+  // retry - so this is measured rather than assumed.
+  useEffect(() => {
+    const el = composerBar.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setComposerHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
@@ -1067,361 +1113,373 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ref={scroller}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-y-auto"
+        style={{ paddingBottom: composerHeight }}
       >
         <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
-        {before ? (
-          <li className="self-center" data-anchor-skip>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLoadEarlier}
-              loading={loadingMore}
-            >
-              載入更早的訊息
-            </Button>
-          </li>
-        ) : null}
-
-        {messages.length === 0 ? (
-          <li className="text-muted-foreground m-auto text-sm" data-anchor-skip>
-            還沒有人說話，先開個頭吧。
-          </li>
-        ) : null}
-
-        {messages.map((message) => {
-          const mine = message.user_id === me?.id;
-          const sender = senders.get(message.user_id);
-
-          return (
-            <li
-              key={message.id}
-              className={`flex max-w-[85%] items-end gap-2 ${
-                mine ? "flex-row-reverse self-end" : "self-start"
-              }`}
-            >
-              {!mine ? (
-                <Avatar
-                  mediaId={sender?.avatar_media_id}
-                  displayName={sender?.display_name || "這位成員"}
-                  className="size-8"
-                />
-              ) : null}
-              <div className={`flex flex-col gap-1 ${mine ? "items-end" : ""}`}>
-                {/* Name and time sit together above the bubble: split across
-                    it, the name reads as if it belonged to the message above. */}
-                <span className="text-muted-foreground flex gap-2 text-xs">
-                  {!mine ? (
-                    <span>{sender?.display_name || "（尚未設定暱稱）"}</span>
-                  ) : null}
-                  <time dateTime={message.created_at}>
-                    {timeOfDay(message.created_at)}
-                  </time>
-                </span>
-                {message.reply_to ? (
-                  <blockquote
-                    className={`bg-muted border-primary/50 text-muted-foreground max-w-full rounded-md border-l-2 px-2.5 py-1.5 text-xs ${
-                      mine ? "text-right" : ""
-                    }`}
-                  >
-                    <span className="font-medium">
-                      {nameOf(message.reply_to.user_id)}
-                    </span>
-                    <span className="ms-1 line-clamp-2">
-                      {quoteOf(message.reply_to)}
-                    </span>
-                  </blockquote>
-                ) : null}
-
-                {message.deleted ? (
-                  <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
-                    （訊息已刪除）
-                  </p>
-                ) : message.sticker_id ? (
-                  // A sticker sits on the page without a bubble: it is the
-                  // whole message, and a border around it would make it look
-                  // like an attachment. Tapping still opens the actions, so
-                  // reply and reaction work on one like on anything else.
-                  <button
-                    type="button"
-                    aria-expanded={openActions === message.id}
-                    onClick={() =>
-                      setOpenActions((open) =>
-                        open === message.id ? null : message.id,
-                      )
-                    }
-                    className="cursor-pointer"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={stickerUrl(message.sticker_id)}
-                      alt="貼圖"
-                      className="size-32 object-contain"
-                    />
-                  </button>
-                ) : message.chat_media_id ? (
-                  // An image is still an ordinary message: tapping it opens
-                  // the same actions as any other, so reply and reaction work
-                  // on a picture too.
-                  <button
-                    type="button"
-                    aria-expanded={openActions === message.id}
-                    onClick={() =>
-                      setOpenActions((open) =>
-                        open === message.id ? null : message.id,
-                      )
-                    }
-                    className={`polaroid cursor-pointer ${mine ? "rotate-[1.2deg]" : "-rotate-[1.2deg]"}`}
-                  >
-                    {/* A GIF animates in an img tag; nothing re-encodes it on
-                        the way here. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={chatMediaUrl(message.chat_media_id)}
-                      alt="傳送的圖片"
-                      className="max-h-64 w-52 rounded-[2px] object-cover"
-                    />
-                  </button>
-                ) : message.meal_record_id ? (
-                  // A meal card is still an ordinary message: it can be
-                  // replied to and reacted to like any other, so the actions
-                  // open the same way.
-                  <button
-                    type="button"
-                    aria-expanded={openActions === message.id}
-                    onClick={() =>
-                      setOpenActions((open) =>
-                        open === message.id ? null : message.id,
-                      )
-                    }
-                    className="cursor-pointer text-start"
-                  >
-                    <MealCard mealId={message.meal_record_id} />
-                  </button>
-                ) : (
-                  // The bubble is the tap target: a phone has no hover, and a
-                  // long press is a gesture people have to be taught.
-                  <button
-                    type="button"
-                    aria-expanded={openActions === message.id}
-                    onClick={() =>
-                      setOpenActions((open) =>
-                        open === message.id ? null : message.id,
-                      )
-                    }
-                    className={`shadow-pop cursor-pointer px-3.5 py-2.5 text-start text-sm leading-relaxed whitespace-pre-wrap ${
-                      mine
-                        ? "bg-primary text-primary-foreground rotate-[0.4deg] rounded-[1.125rem_1.125rem_0.375rem_1.125rem]"
-                        : "bg-card border-border -rotate-[0.4deg] rounded-[1.125rem_1.125rem_1.125rem_0.375rem] border"
-                    }`}
-                  >
-                    {message.content}
-                  </button>
-                )}
-
-                {message.reactions.length > 0 ? (
-                  <ul
-                    className={`flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}
-                  >
-                    {message.reactions.map((reaction) => (
-                      <li key={reaction.reaction_type}>
-                        <button
-                          type="button"
-                          aria-pressed={reaction.mine}
-                          onClick={() =>
-                            handleReact(message, reaction.reaction_type)
-                          }
-                          className={`relative flex h-8 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] ${
-                            reaction.mine
-                              ? "border-primary/50 bg-primary/10 text-primary-ink font-bold"
-                              : "bg-card border-border"
-                          }`}
-                        >
-                          <span aria-hidden>{reaction.reaction_type}</span>
-                          <span>{reaction.count}</span>
-                          <span className="sr-only">
-                            {reaction.mine ? "取消這個反應" : "加上這個反應"}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                {openActions === message.id ? (
-                  <div className="bg-card shadow-pop flex flex-wrap items-center gap-1 rounded-lg border p-1.5">
-                    {reactionTypes.map((reactionType) => (
-                      <button
-                        key={reactionType}
-                        type="button"
-                        onClick={() => handleReact(message, reactionType)}
-                        className="hover:bg-muted size-11 cursor-pointer rounded-full text-lg"
-                      >
-                        <span aria-hidden>{reactionType}</span>
-                        <span className="sr-only">{`用 ${reactionType} 回應`}</span>
-                      </button>
-                    ))}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setReplyTo(message);
-                        setOpenActions(null);
-                      }}
-                    >
-                      回覆
-                    </Button>
-                    {message.meal_record_id ? (
-                      // The card itself is the tap target for reacting, so
-                      // opening the meal lives here rather than as a link
-                      // nested inside that button. Styled through
-                      // buttonVariants, the same as the record links on the
-                      // Today page.
-                      <Link
-                        href={`/meals/${message.meal_record_id}`}
-                        className={buttonVariants({
-                          variant: "ghost",
-                          size: "sm",
-                        })}
-                      >
-                        查看紀錄
-                      </Link>
-                    ) : null}
-                    {mine ? (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => handleDelete(message)}
-                      >
-                        刪除
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+          {before ? (
+            <li className="self-center" data-anchor-skip>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLoadEarlier}
+                loading={loadingMore}
+              >
+                載入更早的訊息
+              </Button>
             </li>
-          );
-        })}
-      </ol>
+          ) : null}
+
+          {messages.length === 0 ? (
+            <li
+              className="text-muted-foreground m-auto text-sm"
+              data-anchor-skip
+            >
+              還沒有人說話，先開個頭吧。
+            </li>
+          ) : null}
+
+          {messages.map((message) => {
+            const mine = message.user_id === me?.id;
+            const sender = senders.get(message.user_id);
+
+            return (
+              <li
+                key={message.id}
+                className={`flex max-w-[85%] items-end gap-2 ${
+                  mine ? "flex-row-reverse self-end" : "self-start"
+                }`}
+              >
+                {!mine ? (
+                  <Avatar
+                    mediaId={sender?.avatar_media_id}
+                    displayName={sender?.display_name || "這位成員"}
+                    className="size-8"
+                  />
+                ) : null}
+                <div
+                  className={`flex flex-col gap-1 ${mine ? "items-end" : ""}`}
+                >
+                  {/* Name and time sit together above the bubble: split across
+                    it, the name reads as if it belonged to the message above. */}
+                  <span className="text-muted-foreground flex gap-2 text-xs">
+                    {!mine ? (
+                      <span>{sender?.display_name || "（尚未設定暱稱）"}</span>
+                    ) : null}
+                    <time dateTime={message.created_at}>
+                      {timeOfDay(message.created_at)}
+                    </time>
+                  </span>
+                  {message.reply_to ? (
+                    <blockquote
+                      className={`bg-muted border-primary/50 text-muted-foreground max-w-full rounded-md border-l-2 px-2.5 py-1.5 text-xs ${
+                        mine ? "text-right" : ""
+                      }`}
+                    >
+                      <span className="font-medium">
+                        {nameOf(message.reply_to.user_id)}
+                      </span>
+                      <span className="ms-1 line-clamp-2">
+                        {quoteOf(message.reply_to)}
+                      </span>
+                    </blockquote>
+                  ) : null}
+
+                  {message.deleted ? (
+                    <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
+                      （訊息已刪除）
+                    </p>
+                  ) : message.sticker_id ? (
+                    // A sticker sits on the page without a bubble: it is the
+                    // whole message, and a border around it would make it look
+                    // like an attachment. Tapping still opens the actions, so
+                    // reply and reaction work on one like on anything else.
+                    <button
+                      type="button"
+                      aria-expanded={openActions === message.id}
+                      onClick={() =>
+                        setOpenActions((open) =>
+                          open === message.id ? null : message.id,
+                        )
+                      }
+                      className="cursor-pointer"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={stickerUrl(message.sticker_id)}
+                        alt="貼圖"
+                        className="size-32 object-contain"
+                      />
+                    </button>
+                  ) : message.chat_media_id ? (
+                    // An image is still an ordinary message: tapping it opens
+                    // the same actions as any other, so reply and reaction work
+                    // on a picture too.
+                    <button
+                      type="button"
+                      aria-expanded={openActions === message.id}
+                      onClick={() =>
+                        setOpenActions((open) =>
+                          open === message.id ? null : message.id,
+                        )
+                      }
+                      className={`polaroid cursor-pointer ${mine ? "rotate-[1.2deg]" : "-rotate-[1.2deg]"}`}
+                    >
+                      {/* A GIF animates in an img tag; nothing re-encodes it on
+                        the way here. */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={chatMediaUrl(message.chat_media_id)}
+                        alt="傳送的圖片"
+                        className="max-h-64 w-52 rounded-[2px] object-cover"
+                      />
+                    </button>
+                  ) : message.meal_record_id ? (
+                    // A meal card is still an ordinary message: it can be
+                    // replied to and reacted to like any other, so the actions
+                    // open the same way.
+                    <button
+                      type="button"
+                      aria-expanded={openActions === message.id}
+                      onClick={() =>
+                        setOpenActions((open) =>
+                          open === message.id ? null : message.id,
+                        )
+                      }
+                      className="cursor-pointer text-start"
+                    >
+                      <MealCard mealId={message.meal_record_id} />
+                    </button>
+                  ) : (
+                    // The bubble is the tap target: a phone has no hover, and a
+                    // long press is a gesture people have to be taught.
+                    <button
+                      type="button"
+                      aria-expanded={openActions === message.id}
+                      onClick={() =>
+                        setOpenActions((open) =>
+                          open === message.id ? null : message.id,
+                        )
+                      }
+                      className={`shadow-pop cursor-pointer px-3.5 py-2.5 text-start text-sm leading-relaxed whitespace-pre-wrap ${
+                        mine
+                          ? "bg-primary text-primary-foreground rotate-[0.4deg] rounded-[1.125rem_1.125rem_0.375rem_1.125rem]"
+                          : "bg-card border-border -rotate-[0.4deg] rounded-[1.125rem_1.125rem_1.125rem_0.375rem] border"
+                      }`}
+                    >
+                      {message.content}
+                    </button>
+                  )}
+
+                  {message.reactions.length > 0 ? (
+                    <ul
+                      className={`flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}
+                    >
+                      {message.reactions.map((reaction) => (
+                        <li key={reaction.reaction_type}>
+                          <button
+                            type="button"
+                            aria-pressed={reaction.mine}
+                            onClick={() =>
+                              handleReact(message, reaction.reaction_type)
+                            }
+                            className={`relative flex h-8 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] ${
+                              reaction.mine
+                                ? "border-primary/50 bg-primary/10 text-primary-ink font-bold"
+                                : "bg-card border-border"
+                            }`}
+                          >
+                            <span aria-hidden>{reaction.reaction_type}</span>
+                            <span>{reaction.count}</span>
+                            <span className="sr-only">
+                              {reaction.mine ? "取消這個反應" : "加上這個反應"}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {openActions === message.id ? (
+                    <div className="bg-card shadow-pop flex flex-wrap items-center gap-1 rounded-lg border p-1.5">
+                      {reactionTypes.map((reactionType) => (
+                        <button
+                          key={reactionType}
+                          type="button"
+                          onClick={() => handleReact(message, reactionType)}
+                          className="hover:bg-muted size-11 cursor-pointer rounded-full text-lg"
+                        >
+                          <span aria-hidden>{reactionType}</span>
+                          <span className="sr-only">{`用 ${reactionType} 回應`}</span>
+                        </button>
+                      ))}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setReplyTo(message);
+                          setOpenActions(null);
+                        }}
+                      >
+                        回覆
+                      </Button>
+                      {message.meal_record_id ? (
+                        // The card itself is the tap target for reacting, so
+                        // opening the meal lives here rather than as a link
+                        // nested inside that button. Styled through
+                        // buttonVariants, the same as the record links on the
+                        // Today page.
+                        <Link
+                          href={`/meals/${message.meal_record_id}`}
+                          className={buttonVariants({
+                            variant: "ghost",
+                            size: "sm",
+                          })}
+                        >
+                          查看紀錄
+                        </Link>
+                      ) : null}
+                      {mine ? (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDelete(message)}
+                        >
+                          刪除
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       </div>
 
-      {/* A zero-height anchor, so the pill can float over the conversation
-          without taking a row from it. It sits between the scroller and
-          everything below, which is why `bottom-2` lands just above whatever
-          the composer currently is — an error, a reply preview, the sticker
-          tray — instead of needing to know how tall that stack got. */}
-      <div className="relative">
-        {/* The button is not the announcement. Its label carries the count, so
-            a live region wrapped around it reads "3 則新訊息", "4 則新訊息",
-            "5 則新訊息" — once per arrival, interrupting a screen reader with
-            the same fact over and over. This says the one thing worth saying
-            and says it once: the text does not change while the pill is up, so
-            nothing re-announces until it has been away and come back. */}
-        <p className="sr-only" role="status" aria-live="polite">
-          {unread > 0 ? "下方有新訊息" : ""}
-        </p>
-        {unread > 0 ? (
+      <div
+        ref={composerBar}
+        style={{ bottom: composerOffset }}
+        className="bg-background fixed left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col"
+      >
+        {/* A zero-height anchor, so the pill can float over the conversation
+            without taking a row from it. It sits at the top of this bar,
+            which is why `bottom-2` lands just above whatever the bar
+            currently holds — an error, a reply preview, the sticker tray —
+            instead of needing to know how tall that stack got. */}
+        <div className="relative">
+          {/* The button is not the announcement. Its label carries the count, so
+              a live region wrapped around it reads "3 則新訊息", "4 則新訊息",
+              "5 則新訊息" — once per arrival, interrupting a screen reader with
+              the same fact over and over. This says the one thing worth saying
+              and says it once: the text does not change while the pill is up, so
+              nothing re-announces until it has been away and come back. */}
+          <p className="sr-only" role="status" aria-live="polite">
+            {unread > 0 ? "下方有新訊息" : ""}
+          </p>
+          {unread > 0 ? (
+            <Button
+              size="sm"
+              onClick={handleJumpToNewest}
+              className="absolute bottom-2 left-1/2 -translate-x-1/2"
+            >
+              <ArrowDownIcon aria-hidden />
+              {unread} 則新訊息
+            </Button>
+          ) : null}
+        </div>
+
+        {error ? (
+          <Message tone="error" className="mx-4">
+            {error}
+          </Message>
+        ) : null}
+
+        {attachment.current && !sending ? (
           <Button
+            variant="outline"
             size="sm"
-            onClick={handleJumpToNewest}
-            className="absolute bottom-2 left-1/2 -translate-x-1/2"
+            className="mx-4"
+            onClick={handleRetryAttachment}
           >
-            <ArrowDownIcon aria-hidden />
-            {unread} 則新訊息
+            重新送出這張圖片
           </Button>
         ) : null}
-      </div>
 
-      {error ? (
-        <Message tone="error" className="mx-4">
-          {error}
-        </Message>
-      ) : null}
+        {replyTo ? (
+          <div className="bg-muted border-primary/50 mx-4 flex items-center gap-2 rounded-md border-l-2 px-3 py-2 text-xs">
+            <span className="text-muted-foreground shrink-0">回覆</span>
+            <span className="font-medium shrink-0">
+              {nameOf(replyTo.user_id)}
+            </span>
+            <span className="text-muted-foreground line-clamp-1 flex-1">
+              {quoteOf(replyTo)}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setReplyTo(null)}
+              aria-label="取消回覆"
+            >
+              <XIcon aria-hidden />
+            </Button>
+          </div>
+        ) : null}
 
-      {attachment.current && !sending ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="mx-4"
-          onClick={handleRetryAttachment}
-        >
-          重新送出這張圖片
-        </Button>
-      ) : null}
-
-      {replyTo ? (
-        <div className="bg-muted border-primary/50 mx-4 flex items-center gap-2 rounded-md border-l-2 px-3 py-2 text-xs">
-          <span className="text-muted-foreground shrink-0">回覆</span>
-          <span className="font-medium shrink-0">
-            {nameOf(replyTo.user_id)}
-          </span>
-          <span className="text-muted-foreground line-clamp-1 flex-1">
-            {quoteOf(replyTo)}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setReplyTo(null)}
-            aria-label="取消回覆"
-          >
-            <XIcon aria-hidden />
-          </Button>
-        </div>
-      ) : null}
-
-      <StickerPicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        onSend={handleSendSticker}
-        sending={sending}
-        // Once there is a draft, the keyboard and the text are what matter; a
-        // permanent rail would cost conversation height for the rest of the chat.
-        showRail={draft.trim().length === 0}
-      />
-
-      <form
-        onSubmit={handleSend}
-        className="border-border flex gap-2 border-t px-4 py-3"
-      >
-        {/* A native label opens the picker without waiting for hydration,
-            the same reason the record page does it this way. */}
-        <label
-          className={cn(
-            buttonVariants({ variant: "outline", size: "icon" }),
-            "cursor-pointer",
-            sending && "pointer-events-none opacity-50",
-          )}
-        >
-          <ImageIcon aria-hidden />
-          <span className="sr-only">傳送圖片</span>
-          <input
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            onChange={handleAttach}
-          />
-        </label>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          aria-expanded={pickerOpen}
-          onClick={() => setPickerOpen(true)}
-        >
-          <StickerFaceIcon className="size-5" />
-          <span className="sr-only">貼圖</span>
-        </Button>
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="說點什麼…"
-          aria-label="訊息"
-          maxLength={2000}
+        <StickerPicker
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          onSend={handleSendSticker}
+          sending={sending}
+          // Once there is a draft, the keyboard and the text are what matter; a
+          // permanent rail would cost conversation height for the rest of the chat.
+          showRail={draft.trim().length === 0}
         />
-        <Button type="submit" size="icon" disabled={!draft.trim() || sending}>
-          <SendHorizonalIcon aria-hidden />
-          <span className="sr-only">送出</span>
-        </Button>
-      </form>
+
+        <form
+          onSubmit={handleSend}
+          className="border-border flex gap-2 border-t px-4 py-3"
+        >
+          {/* A native label opens the picker without waiting for hydration,
+              the same reason the record page does it this way. */}
+          <label
+            className={cn(
+              buttonVariants({ variant: "outline", size: "icon" }),
+              "cursor-pointer",
+              sending && "pointer-events-none opacity-50",
+            )}
+          >
+            <ImageIcon aria-hidden />
+            <span className="sr-only">傳送圖片</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={handleAttach}
+            />
+          </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-expanded={pickerOpen}
+            onClick={() => setPickerOpen(true)}
+          >
+            <StickerFaceIcon className="size-5" />
+            <span className="sr-only">貼圖</span>
+          </Button>
+          <Input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="說點什麼…"
+            aria-label="訊息"
+            maxLength={2000}
+          />
+          <Button type="submit" size="icon" disabled={!draft.trim() || sending}>
+            <SendHorizonalIcon aria-hidden />
+            <span className="sr-only">送出</span>
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
