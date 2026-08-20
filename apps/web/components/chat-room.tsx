@@ -671,7 +671,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       const bar = composerBar.current;
       const el = scroller.current;
       if (bar) {
-        bar.style.bottom = `${offset}px`;
+        bar.style.transform = `translate3d(-50%, -${offset}px, 0)`;
       }
       if (el) {
         el.style.paddingBottom = `${offset + composerHeightRef.current}px`;
@@ -1416,7 +1416,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
       <div
         ref={composerBar}
-        className="bg-background fixed bottom-0 left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col"
+        className="bg-background fixed bottom-0 left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col will-change-transform"
       >
         {/* A zero-height anchor, so the pill can float over the conversation
             without taking a row from it. It sits at the top of this bar,
@@ -1527,11 +1527,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            onFocus={() => {
-              // Give Safari a moment to finish its auto-pan, then snap the ancestors
-              // back so the header stays at the top of the screen while typing.
-              setTimeout(resetAncestorScroll, 300);
-            }}
+
             onBlur={() => {
               // Give Safari's keyboard dismissal animation a moment, then snap back.
               setTimeout(resetAncestorScroll, 100);
