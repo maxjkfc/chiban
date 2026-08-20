@@ -258,8 +258,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // the composer bar is `position: fixed` and tracks `visualViewport`
   // itself instead of asking the browser to keep it in view.
   const composerBar = useRef<HTMLDivElement>(null);
-  const [composerOffset, setComposerOffset] = useState(0);
-  const [composerHeight, setComposerHeight] = useState(0);
+  const composerHeightRef = useRef(0);
   // What the reader is looking at while they are not being carried along: an
   // element and how far below the scroller's top edge it sat. Content growing
   // anywhere outside it — a prepended page, a picture finishing its decode —
@@ -654,13 +653,32 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // of the visual viewport. `offsetTop` also matters - iOS pans the visual
   // viewport rather than resizing it, so the covered strip is the gap on
   // both ends, not just `innerHeight - height`.
+  //
+  // Driven directly on the DOM rather than through React state: during the
+  // iOS keyboard slide-in animation, `visualViewport` dispatches events on
+  // every animation frame. Updating React state on every frame triggered
+  // dozens of full component re-renders per stroke, creating noticeable
+  // stutter behind the native 60/120Hz hardware animation. Direct DOM
+  // mutation updates in the exact same frame with zero React overhead.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     function apply() {
-      setComposerOffset(
-        Math.max(0, window.innerHeight - vv!.height - vv!.offsetTop),
+      const offset = Math.max(
+        0,
+        window.innerHeight - vv!.height - vv!.offsetTop,
       );
+      const bar = composerBar.current;
+      const el = scroller.current;
+      if (bar) {
+        bar.style.bottom = `${offset}px`;
+      }
+      if (el) {
+        el.style.paddingBottom = `${offset + composerHeightRef.current}px`;
+        if (following.current) {
+          el.scrollTop = el.scrollHeight;
+        }
+      }
       // When the keyboard dismisses (visualViewport height returns to window height),
       // clear any phantom scroll that iOS left on the ancestor containers.
       if (Math.abs(vv!.height - window.innerHeight) < 10) {
@@ -684,21 +702,25 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     const el = composerBar.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry) setComposerHeight(entry.contentRect.height);
+      if (entry) {
+        const height = entry.contentRect.height;
+        composerHeightRef.current = height;
+        const scrollEl = scroller.current;
+        const vv = window.visualViewport;
+        const offset = vv
+          ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+          : 0;
+        if (scrollEl) {
+          scrollEl.style.paddingBottom = `${offset + height}px`;
+          if (following.current) {
+            scrollEl.scrollTop = scrollEl.scrollHeight;
+          }
+        }
+      }
     });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-
-  // When the composer moves up (keyboard opens) or grows (reply banner appears),
-  // if the reader was watching the latest messages, carry the scroller down
-  // so the conversation remains visible right above the raised composer bar.
-  useEffect(() => {
-    const el = scroller.current;
-    if (el && following.current) {
-      scrollToOffset(el, el.scrollHeight);
-    }
-  }, [composerOffset, composerHeight, scrollToOffset]);
 
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
@@ -1150,7 +1172,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ref={scroller}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-y-auto"
-        style={{ paddingBottom: composerOffset + composerHeight }}
       >
         <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
           {before ? (
@@ -1395,8 +1416,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
       <div
         ref={composerBar}
-        style={{ bottom: composerOffset }}
-        className="bg-background fixed left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col"
+        className="bg-background fixed bottom-0 left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col"
       >
         {/* A zero-height anchor, so the pill can float over the conversation
             without taking a row from it. It sits at the top of this bar,
