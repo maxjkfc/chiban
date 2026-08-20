@@ -23,6 +23,13 @@ export const viewport: Viewport = {
   // The app is used one-handed on a phone; let the browser account for the
   // home indicator and notch instead of us guessing.
   viewportFit: "cover",
+  // Without this, iOS leaves `dvh` sized for the pre-keyboard viewport: the
+  // composer stays put and the on-screen keyboard just covers whatever used
+  // to be below it, so the browser's own "scroll the focused input into
+  // view" opens a dead gap between the composer and the keyboard. This makes
+  // `dvh` itself shrink for the keyboard, so the flex layout reflows and the
+  // composer lands directly above it.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
