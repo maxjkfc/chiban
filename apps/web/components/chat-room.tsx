@@ -596,15 +596,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     if (el && !following.current) restoreAnchor(el);
   });
 
-  // Pictures and meal cards reach their final height after the commit that
-  // added them: an <img> with no reserved box is zero-high until it decodes,
-  // and a MealCard renders a placeholder while it fetches. Growing content
-  // dispatches no scroll event, so nothing above would run again.
-  //
-  // Both invariants are held here, because both are broken by the same thing.
-  // A reader at the bottom is kept there; a reader up in the history keeps the
-  // message they were reading, which is what makes a page of older photographs
-  // load without walking them backwards.
+  // Both container resizing (keyboard opening/closing, window resizing) and
+  // content growth (pictures decoding, meal cards fetching, history prepending)
+  // are held by the same invariants here:
+  // - A reader at the bottom is kept there (scrolled to el.scrollHeight).
+  // - A reader up in the history keeps the message they were reading (restoreAnchor).
   useEffect(() => {
     const el = scroller.current;
     const list = el?.firstElementChild;
@@ -615,6 +611,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       else restoreAnchor(el);
     });
     observer.observe(list);
+    observer.observe(el);
     return () => observer.disconnect();
   }, [restoreAnchor, scrollToOffset]);
 
