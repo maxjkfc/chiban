@@ -104,6 +104,7 @@ func postAvatarHandler(d Deps) http.HandlerFunc {
 
 		p, err := d.Profile.SaveAvatar(r.Context(), auth.UserFromContext(r.Context()).ID, data)
 		if err != nil {
+			logFailedUpload(r, d, "avatar", err)
 			writeProfileError(w, d, err)
 			return
 		}

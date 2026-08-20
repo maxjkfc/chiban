@@ -59,6 +59,7 @@ type App struct {
 	Storage *storage.Memory
 	// Client keeps cookies, so a test that logs in stays logged in.
 	Client *http.Client
+	logs   *logSink
 }
 
 // NewApp starts an API server for a single test and cleans up afterwards.
@@ -85,10 +86,11 @@ func NewApp(t *testing.T) *App {
 	truncateAll(t, ctx, db)
 
 	objects := storage.NewMemory()
+	logs := &logSink{}
 	router := httpapi.NewRouter(httpapi.Deps{
 		DB:      db,
 		Storage: objects,
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:  slog.New(slog.NewTextHandler(logs, nil)),
 	})
 
 	server := httptest.NewServer(router)
@@ -105,7 +107,35 @@ func NewApp(t *testing.T) *App {
 		DB:      db,
 		Storage: objects,
 		Client:  &http.Client{Jar: jar},
+		logs:    logs,
 	}
+}
+
+// Logs is everything the server has logged so far. Tests assert on it where
+// the log line is the deliverable: a rejected upload reaches the user as a
+// generic failure, so the record an operator reads is the only place the
+// actual reason survives.
+func (a *App) Logs() string {
+	return a.logs.String()
+}
+
+// logSink collects log output. Handlers log from their own goroutines, so the
+// buffer is guarded even though a test only reads it once the response is in.
+type logSink struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *logSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *logSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
 }
 
 // Request sends a JSON request to the API. A nil body sends no payload.

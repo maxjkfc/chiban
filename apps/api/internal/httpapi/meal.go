@@ -93,6 +93,7 @@ func createMealHandler(d Deps) http.HandlerFunc {
 			Description: r.FormValue("description"),
 		}, uploads)
 		if err != nil {
+			logFailedUpload(r, d, "photos", err)
 			writeMealError(w, d, err)
 			return
 		}

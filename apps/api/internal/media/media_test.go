@@ -7,6 +7,8 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -156,6 +158,43 @@ func TestPNGIsAcceptedAndStoredAsJPEG(t *testing.T) {
 	}
 }
 
+// A phone set to High Efficiency — the iPhone default — hands the browser a
+// HEIC, which nothing outside Apple's platforms renders. Accepting it and
+// storing the JPEG is what makes "take a photo, publish" work at all.
+func TestHEICFromAPhoneIsAcceptedAndStoredAsJPEG(t *testing.T) {
+	out, err := media.Sanitize(readFixture(t, "portrait.heic"))
+	if err != nil {
+		t.Fatalf("sanitize: %v", err)
+	}
+
+	if out.Kind != media.KindImage || out.ContentType != "image/jpeg" {
+		t.Fatalf("out = %q / %q, want image / image/jpeg", out.Kind, out.ContentType)
+	}
+	if out.Extension() != "jpg" {
+		t.Fatalf("extension = %q, want jpg", out.Extension())
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(out.Data)); err != nil {
+		t.Fatalf("stored image does not decode as JPEG: %v", err)
+	}
+	if out.Width != 40 || out.Height != 60 {
+		t.Fatalf("stored %dx%d, want the source's 40x60", out.Width, out.Height)
+	}
+}
+
+// HEIC carries the camera's rotation beside the pixels rather than in them, so
+// a decoder that ignores it stores every portrait photo on its side. The
+// fixture is the same 40x60 canvas tagged as rotated a quarter turn.
+func TestHEICRotationIsApplied(t *testing.T) {
+	out, err := media.Sanitize(readFixture(t, "portrait-rotated.heic"))
+	if err != nil {
+		t.Fatalf("sanitize: %v", err)
+	}
+
+	if out.Width != 60 || out.Height != 40 {
+		t.Fatalf("stored %dx%d, want 60x40 — the rotation was not applied", out.Width, out.Height)
+	}
+}
+
 func encodeJPEG(t *testing.T, img image.Image) []byte {
 	t.Helper()
 
@@ -188,6 +227,16 @@ func encodeAnimatedGIFOfSize(t *testing.T, frames, size int) []byte {
 		t.Fatalf("encode gif: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func readFixture(t *testing.T, name string) []byte {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return data
 }
 
 // jpegWithGPSExif builds a JPEG carrying a minimal but real APP1/EXIF block

@@ -101,6 +101,28 @@ func TestMealPhotoStreamsToItsOwner(t *testing.T) {
 	}
 }
 
+// Every rejected photo reaches the user as the same failed upload, and the
+// phones this product runs on cannot be reproduced locally: a HEIC, a ProRAW
+// DNG and a photo iCloud never finished downloading are three different bugs
+// wearing one message. The server's record of what the client declared is what
+// tells them apart, so it is part of the contract rather than a convenience.
+func TestARejectedPhotoIsLoggedWithWhatTheClientDeclared(t *testing.T) {
+	app := testsupport.NewApp(t)
+	app.Onboard("mei@example.com", "小美")
+
+	resp := app.UploadMeal(nil, []byte("this is not a photo"))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	logs := app.Logs()
+	for _, want := range []string{"upload not stored", "photo-0.jpg", "bytes=19"} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("log is missing %q, which is what makes the failure diagnosable:\n%s", want, logs)
+		}
+	}
+}
+
 func TestMealsRequireASession(t *testing.T) {
 	app := testsupport.NewApp(t)
 

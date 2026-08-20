@@ -476,6 +476,7 @@ func uploadChatMediaHandler(d Deps) http.HandlerFunc {
 
 		uploaded, err := d.Chat.UploadMedia(r.Context(), auth.UserFromContext(r.Context()).ID, data)
 		if err != nil {
+			logFailedUpload(r, d, "file", err)
 			writeChatError(w, d, err)
 			return
 		}
