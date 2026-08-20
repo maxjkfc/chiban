@@ -650,6 +650,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       });
   }, [messages, roster, groupId]);
 
+  // Consumes this attempt's follow token the moment it can be proven stale: a
+  // retry sent after this room never saw the first response, the server
+  // having stored and broadcast that message anyway. The socket copy already
+  // consumed the token once; re-adding it before the retry is what a retry
+  // has to do, since it cannot know in advance it was unnecessary. Left alone,
+  // the token would sit in the set until some later, unrelated arrival ran the
+  // scanning effect and wrongly claimed it.
+  function settleSend(
+    clientMessageID: string,
+    current: ChatMessage[],
+    sent: ChatMessage,
+  ) {
+    if (current.some((m) => m.id === sent.id)) {
+      sentHere.current.delete(clientMessageID);
+    }
+    return merge(current, [sent], "newer");
+  }
+
   async function handleSend(event: React.SyntheticEvent) {
     event.preventDefault();
 
@@ -690,7 +708,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pending.current = null;
       setReplyTo(null);
-      setMessages((current) => merge(current, [sent], "newer"));
+      setMessages((current) => settleSend(clientMessageID, current, sent));
     } catch (caught) {
       setDraft(content);
       setError(
@@ -770,7 +788,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setReplyTo((current) =>
       current?.id === attempt.replyToID ? null : current,
     );
-    setMessages((current) => merge(current, [sent], "newer"));
+    setMessages((current) =>
+      settleSend(attempt.clientMessageID, current, sent),
+    );
   }
 
   // Answers whether the sticker actually went out, so the picker knows to
@@ -802,7 +822,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pendingSticker.current = null;
       setReplyTo(null);
-      setMessages((current) => merge(current, [sent], "newer"));
+      setMessages((current) => settleSend(clientMessageID, current, sent));
       return true;
     } catch (caught) {
       setError(
@@ -953,9 +973,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // Used from scroll events, which a drag can fire several times before a
   // paint. Each capture rescans every child's geometry — real cost on a long,
   // low-end-phone conversation — so this caps it at once per frame rather than
-  // once per event. The layout effect only reads `viewAnchor` on commits this
-  // component itself triggers, so arriving a frame late costs nothing here the
-  // way it would in `handleLoadEarlier`.
+  // once per event.
+  //
+  // Landing a frame late is safe here because of when frames run, not because
+  // of who reads `viewAnchor`: the browser runs scroll steps, then animation
+  // frame callbacks — this one included — then resize observer steps, then
+  // paint, all within the same frame. React's commit is a task, not a step in
+  // that sequence, so it never lands between this write and the layout effect
+  // or ResizeObserver reading it. The value is current by the time either
+  // does. Moving this off `requestAnimationFrame` — a `setTimeout`, or a
+  // capture relocated elsewhere — would lose that ordering guarantee.
   const anchorScheduled = useRef(false);
   function captureAnchorThrottled(el: HTMLDivElement) {
     if (anchorScheduled.current) return;
