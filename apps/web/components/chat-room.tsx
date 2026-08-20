@@ -252,10 +252,23 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   const scroller = useRef<HTMLDivElement>(null);
   // How far the reader was from the bottom when a page of older messages was
   // requested. Set only by that request, so everything else leaves it null.
-  const anchor = useRef<number | null>(null);
+  // Named for the prepend rather than "anchor": loadLatest has its own local
+  // `anchor`, meaning a message id, and the two are not related.
+  const prependAnchor = useRef<number | null>(null);
   // Whether the reader is still at the newest message. Starts true so the first
   // page lands at the bottom; only a scroll ever changes it.
   const following = useRef(true);
+  // The previous scroll offset, so a scroll event can tell "the reader moved
+  // up" from "the content grew downward beneath them".
+  const lastScrollTop = useRef(0);
+  // Set by this room's own send paths, consumed once by the follow effect.
+  //
+  // Sending is asking to see the result, so it overrides having scrolled up.
+  // Deciding that from the author of the newest message instead would be wrong
+  // in two reachable ways: the same account sending from another device, and a
+  // reconnect whose replayed page happens to end on this user's own message.
+  // Neither is this reader asking for anything.
+  const sentHere = useRef(false);
   // The newest message the reader has actually been shown. Anything after it in
   // the list is what the unread pill counts. Undefined until the first page
   // lands, when the follow effect below sets it.
@@ -322,6 +335,14 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           // separated by a gap this page cannot bridge. Starting again from
           // this page keeps history walkable: its cursor leads back across the
           // gap, where merging would strand those messages out of reach.
+          //
+          // Everything the reader's position meant is discarded along with the
+          // list, so the room restarts the way it opens: at the newest message.
+          // Leaving it alone would keep a scrollTop pointing into replaced
+          // content, and an unread boundary that is no longer in the array at
+          // all — a pill counting messages nobody can name.
+          following.current = true;
+          prependAnchor.current = null;
           setMessages((current) => {
             // Whatever the socket delivered while this request was in flight
             // is newer than this page, so it survives the restart.
@@ -471,21 +492,26 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // instead of yanking them back down.
   //
   // Scrolling up opts out: an arriving message must not snatch the screen away
-  // from someone reading history. Their own message is the exception — sending
-  // is asking to see it — and that is decided from who sent the newest message
-  // rather than from a flag each of the three send paths would have to set.
+  // from someone reading history. This room's own sends are the exception, and
+  // they say so themselves through `sentHere`.
+  //
+  // `following.current` is set here rather than left to the scroll event this
+  // assignment triggers: that event is dispatched asynchronously, and until it
+  // arrives the three ways of reaching the bottom would disagree about whether
+  // the reader is at it.
   //
   // The scroller is driven directly rather than by scrolling a sentinel into
   // view: a sentinel stops at its own edge, which leaves the list's bottom
   // padding below the fold and reads as "there is more down there".
   const newest = messages.at(-1)?.id;
-  const newestIsMine = !!me && messages.at(-1)?.user_id === me.id;
   useEffect(() => {
     const el = scroller.current;
-    if (!el || !(following.current || newestIsMine)) return;
+    const asked = sentHere.current;
+    sentHere.current = false;
+    if (!el || !(following.current || asked)) return;
     el.scrollTop = el.scrollHeight;
+    following.current = true;
     setSeen(newest);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newest]);
 
   // What arrived while the reader was up in the history. Derived from the last
@@ -493,10 +519,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // counter has to be right about every path that adds messages — a socket
   // event, a reconnect replaying a page, a send — and drifts the first time one
   // of them is missed.
+  //
+  // A missing boundary means the list no longer contains what the reader last
+  // saw. `findIndex` answers that with -1, which the arithmetic would turn into
+  // the whole list — a pill claiming fifty unread messages, most of them read
+  // long ago. The reconnect gap branch restarts the room instead of letting
+  // that happen, so this is the guard for a case that should not arise.
+  const seenIndex =
+    seen === undefined ? -1 : messages.findIndex((m) => m.id === seen);
   const unread =
-    seen === undefined || seen === newest
-      ? 0
-      : Math.max(0, messages.length - 1 - messages.findIndex((m) => m.id === seen));
+    seen === newest || seenIndex < 0 ? 0 : messages.length - 1 - seenIndex;
 
   // A page of older messages is inserted above the reader, which would push
   // what they were reading down by the height of the whole page — at the top of
@@ -508,10 +540,31 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // the reader one frame at the wrong offset.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (!el || anchor.current === null) return;
-    el.scrollTop = el.scrollHeight - anchor.current;
-    anchor.current = null;
+    if (!el || prependAnchor.current === null) return;
+    el.scrollTop = el.scrollHeight - prependAnchor.current;
+    prependAnchor.current = null;
   });
+
+  // Pictures and meal cards reach their final height after the commit that
+  // added them: an <img> with no reserved box is zero-high until it decodes,
+  // and a MealCard renders a placeholder while it fetches. Growing content
+  // dispatches no scroll event, so a reader who was at the bottom is left
+  // above it — on a product whose messages are mostly photographs, that is the
+  // common case rather than an edge one.
+  //
+  // Only the bottom is held. A prepend deliberately leaves `following` false,
+  // so this stays out of the way of the anchor above.
+  useEffect(() => {
+    const el = scroller.current;
+    const list = el?.firstElementChild;
+    if (!el || !list || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (following.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
 
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
@@ -579,6 +632,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pending.current = null;
       setReplyTo(null);
+      sentHere.current = true;
       setMessages((current) => merge(current, [sent], "newer"));
     } catch (caught) {
       setDraft(content);
@@ -658,6 +712,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setReplyTo((current) =>
       current?.id === attempt.replyToID ? null : current,
     );
+    sentHere.current = true;
     setMessages((current) => merge(current, [sent], "newer"));
   }
 
@@ -689,6 +744,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pendingSticker.current = null;
       setReplyTo(null);
+      sentHere.current = true;
       setMessages((current) => merge(current, [sent], "newer"));
       return true;
     } catch (caught) {
@@ -729,7 +785,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         `/api/v1/groups/${groupId}/messages?before=${encodeURIComponent(before)}`,
       );
       const el = scroller.current;
-      if (el) anchor.current = el.scrollHeight - el.scrollTop;
+      if (el) prependAnchor.current = el.scrollHeight - el.scrollTop;
       setMessages((current) =>
         merge(
           reconcile(current, page.messages, settling.current),
@@ -804,18 +860,34 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return senders.get(userId)?.display_name || "這位成員";
   }
 
-  // Reading history means the reader stops being carried to the bottom; coming
-  // back down opts them in again and marks everything below as read.
+  // Only the reader moving away ends the follow. Being at the bottom starts it
+  // again.
   //
-  // Runs on every scroll event, which is fine: three layout reads and a
-  // comparison. The state update is a no-op React discards whenever the id has
-  // not changed, so scrolling around at the bottom does not re-render.
+  // "Not at the bottom" alone is the wrong test, and the bug it caused is the
+  // reason this is written the way it is: a picture finishing its decode grows
+  // the list under a reader who has not touched anything. `scrollTop` is
+  // unchanged, the bottom has simply moved away, and reading that as "they
+  // scrolled up" cancelled the follow a frame before the observer below could
+  // restore it — leaving the reader stranded exactly one image-height short.
+  // A scroll that did not move upward is therefore not an opt-out.
+  //
+  // Runs on every scroll event: three layout reads and a comparison. The
+  // setSeen usually costs nothing, because React compares the new value eagerly
+  // and skips the render — but only while that hook has no update already
+  // queued, so this is cheap rather than free. Guarding on the id keeps the
+  // call out of the queue in the one case that matters, a flick through history
+  // while messages are arriving.
   function handleScroll(event: React.UIEvent<HTMLDivElement>) {
     const el = event.currentTarget;
     const atBottom =
       el.scrollHeight - el.clientHeight - el.scrollTop < followSlack;
-    following.current = atBottom;
-    if (atBottom) setSeen(newest);
+    const movedUp = el.scrollTop < lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+
+    if (atBottom) following.current = true;
+    else if (movedUp) following.current = false;
+
+    if (atBottom && seen !== newest) setSeen(newest);
   }
 
   // The pill's job: put the reader back on the newest message.
@@ -1086,7 +1158,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           everything below, which is why `bottom-2` lands just above whatever
           the composer currently is — an error, a reply preview, the sticker
           tray — instead of needing to know how tall that stack got. */}
-      <div className="relative" role="status" aria-live="polite">
+      <div className="relative">
+        {/* The button is not the announcement. Its label carries the count, so
+            a live region wrapped around it reads "3 則新訊息", "4 則新訊息",
+            "5 則新訊息" — once per arrival, interrupting a screen reader with
+            the same fact over and over. This says the one thing worth saying
+            and says it once: the text does not change while the pill is up, so
+            nothing re-announces until it has been away and come back. */}
+        <p className="sr-only" role="status" aria-live="polite">
+          {unread > 0 ? "下方有新訊息" : ""}
+        </p>
         {unread > 0 ? (
           <Button
             size="sm"
