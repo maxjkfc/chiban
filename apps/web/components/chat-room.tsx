@@ -542,17 +542,29 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // view: a sentinel stops at its own edge, which leaves the list's bottom
   // padding below the fold and reads as "there is more down there".
   const newest = messages.at(-1)?.id;
-  const newestClientID = messages.at(-1)?.client_message_id;
   useEffect(() => {
     const el = scroller.current;
-    const asked = !!newestClientID && sentHere.current.delete(newestClientID);
+    // Checking only the newest message misses this room's own send when it
+    // lands in the same commit as someone else's — two socket frames handled
+    // in one React batch, both newer than what the reader had. The token still
+    // deserves to be consumed and still deserves to carry the reader down; it
+    // is just not necessarily last.
+    let asked = false;
+    for (const id of sentHere.current) {
+      if (messages.some((m) => m.client_message_id === id)) {
+        sentHere.current.delete(id);
+        asked = true;
+      }
+    }
     if (!el || !(following.current || asked)) return;
     scrollToOffset(el, el.scrollHeight);
     following.current = true;
     viewAnchor.current = null;
     setSeen(newest);
-    // newestClientID is a function of newest, and re-running on it alone would
-    // consume the token for a message this effect has already handled.
+    // messages is read for the scan above; the effect is meant to run once per
+    // arriving commit, which `newest` already identifies, not once per
+    // reference change to a list whose contents (reactions, edits) can change
+    // without a new message arriving.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newest, restarts, scrollToOffset]);
 
@@ -912,49 +924,88 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return senders.get(userId)?.display_name || "這位成員";
   }
 
-  // Records the message the reader is looking at, so later growth can be
-  // measured against it.
-  function captureAnchor(el: HTMLDivElement) {
+  // Finds the element the reader is looking at, so later growth can be
+  // measured against it. Skips the pagination button and the empty-room line:
+  // neither survives a render the way a message does, and anchoring the
+  // button specifically fails on the page that removes it — the reader
+  // reaching the true start of history.
+  function findAnchor(el: HTMLDivElement) {
     const top = el.getBoundingClientRect().top;
     const list = el.firstElementChild;
     const held = list
       ? [...list.children].find(
-          (child) => child.getBoundingClientRect().bottom > top,
+          (child) =>
+            !child.hasAttribute("data-anchor-skip") &&
+            child.getBoundingClientRect().bottom > top,
         )
       : undefined;
-    viewAnchor.current = held
+    return held
       ? { element: held, top: held.getBoundingClientRect().top - top }
       : null;
   }
 
+  // Used where the anchor has to exist before the mutation it will correct:
+  // captured this render, read by the layout effect committing the next one.
+  function captureAnchor(el: HTMLDivElement) {
+    viewAnchor.current = findAnchor(el);
+  }
+
+  // Used from scroll events, which a drag can fire several times before a
+  // paint. Each capture rescans every child's geometry — real cost on a long,
+  // low-end-phone conversation — so this caps it at once per frame rather than
+  // once per event. The layout effect only reads `viewAnchor` on commits this
+  // component itself triggers, so arriving a frame late costs nothing here the
+  // way it would in `handleLoadEarlier`.
+  const anchorScheduled = useRef(false);
+  function captureAnchorThrottled(el: HTMLDivElement) {
+    if (anchorScheduled.current) return;
+    anchorScheduled.current = true;
+    requestAnimationFrame(() => {
+      anchorScheduled.current = false;
+      if (!following.current) viewAnchor.current = findAnchor(el);
+    });
+  }
+
   // Moving up ends the follow; reaching the bottom starts it again.
   //
-  // The order of those two matters and cost a bug each way round. Testing only
-  // "not at the bottom" treats a picture finishing its decode as the reader
-  // scrolling away, because the bottom moves while `scrollTop` does not. Giving
-  // "at the bottom" the last word is worse now that the observer above acts on
-  // the answer: dragging up through the 64px of slack would re-arm the follow
-  // and the next decoded image would slam the screen back down, fighting the
-  // hand on it. Moving up is therefore always an opt-out, and the slack only
-  // ever re-arms someone coming back down.
+  // Order matters and has cost a bug each way round. Testing only "not at the
+  // bottom" treats a picture finishing its decode as the reader scrolling
+  // away, because the bottom moves while `scrollTop` does not. Giving "at the
+  // bottom" the last word is wrong too: dragging up through the slack would
+  // re-arm the follow and the next decoded image would slam the screen back
+  // down, fighting the hand on it.
   //
-  // Scrolls this component performed are skipped entirely. They are not the
-  // reader speaking, and reading them as such would discard the anchor that
-  // the same assignment was restoring.
+  // The exception to "moving up opts out" is landing exactly on the bottom —
+  // not within the slack, at it. iOS rubber-bands past the end and springs
+  // back, and every frame of that spring-back is a decreasing `scrollTop`: by
+  // the naive rule, flinging to the newest message would open with the reader
+  // opting out of following it.
+  //
+  // Scrolls this component performed are skipped entirely, and only once:
+  // this component writes `scrollTop` far more often than the reader taps the
+  // exact pixel it last wrote, so the marker is consumed on the very next
+  // event whether or not it matches. Leaving it standing would eventually
+  // coincide with a real scroll to the same offset — landing back at the
+  // bottom after reading history routinely lands on it — and silently stop
+  // reacting to that scroll forever after.
   function handleScroll(event: React.UIEvent<HTMLDivElement>) {
     const el = event.currentTarget;
-    if (el.scrollTop === lastWritten.current) return;
+    const ownWrite =
+      lastWritten.current !== -1 && el.scrollTop === lastWritten.current;
+    lastWritten.current = -1;
+    if (ownWrite) return;
 
-    const atBottom =
-      el.scrollHeight - el.clientHeight - el.scrollTop < followSlack;
+    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
+    const atBottom = remaining < followSlack;
+    const overshotOrAtBottom = remaining <= 0;
     const movedUp = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
 
-    if (movedUp) following.current = false;
+    if (movedUp && !overshotOrAtBottom) following.current = false;
     else if (atBottom) following.current = true;
 
     if (following.current) viewAnchor.current = null;
-    else captureAnchor(el);
+    else captureAnchorThrottled(el);
 
     // Cheap rather than free: React compares the value eagerly and skips the
     // render, but only while this hook has no update already queued. The id
@@ -992,7 +1043,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       >
         <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
         {before ? (
-          <li className="self-center">
+          <li className="self-center" data-anchor-skip>
             <Button
               variant="outline"
               size="sm"
@@ -1005,7 +1056,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ) : null}
 
         {messages.length === 0 ? (
-          <li className="text-muted-foreground m-auto text-sm">
+          <li className="text-muted-foreground m-auto text-sm" data-anchor-skip>
             還沒有人說話，先開個頭吧。
           </li>
         ) : null}
