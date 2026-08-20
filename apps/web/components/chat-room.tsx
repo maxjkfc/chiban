@@ -1,8 +1,19 @@
 "use client";
 
-import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ImageIcon,
+  SendHorizonalIcon,
+  XIcon,
+} from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { Avatar } from "@/components/avatar";
 import { MealCard } from "@/components/meal-card";
@@ -61,6 +72,11 @@ const maxReconnectAttempts = 6;
 function reconnectDelay(failures: number): number {
   return Math.min(2000 * 2 ** (failures - 1), 30_000);
 }
+
+// How close to the bottom still counts as reading the newest message. Wide
+// enough to survive a fractional layout and a half-scrolled thumb, narrow
+// enough that anyone who has deliberately scrolled up is left alone.
+const followSlack = 64;
 
 /**
  * Brings messages already on screen up to date with what the server just said.
@@ -233,7 +249,46 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // The sticker tray's contents live in the picker: the quick rail cannot draw
   // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  // What the reader is looking at while they are not being carried along: an
+  // element and how far below the scroller's top edge it sat. Content growing
+  // anywhere outside it — a prepended page, a picture finishing its decode —
+  // is then corrected by putting that element back where it was.
+  //
+  // Distance from the bottom would be simpler and is wrong: it is only
+  // invariant while everything that grows is above the reader, so a message
+  // arriving underneath them would push them down by its height.
+  const viewAnchor = useRef<{ element: Element; top: number } | null>(null);
+  // Whether the reader is at the newest message and wants to stay there.
+  // Starts true so the first page lands at the bottom.
+  const following = useRef(true);
+  // The previous scroll offset, so a scroll event can tell "the reader moved
+  // up" from "the content grew downward beneath them".
+  const lastScrollTop = useRef(0);
+  // The offset this component last wrote. A scroll event carrying it is this
+  // component's own doing and must not be read as the reader taking over.
+  const lastWritten = useRef(-1);
+  // client_message_ids this room sent, each consumed by the arrival it names.
+  //
+  // Sending is asking to see the result, so it overrides having scrolled up.
+  // Two simpler signals were both wrong. Deciding from the author of the newest
+  // message cannot tell this reader from the same account on another device.
+  // A boolean set after the POST resolves is armed too late and never fires:
+  // the server broadcasts before it answers (internal/chat/chat.go), so the
+  // socket copy usually arrives first, and the response's merge is then a no-op
+  // that leaves the flag cocked for whoever speaks next.
+  const sentHere = useRef(new Set<string>());
+  // Bumped when the room restarts after an outage too long to bridge, so the
+  // effect that scrolls runs even though the newest message may be unchanged.
+  const [restarts, setRestarts] = useState(0);
+  // Which page of history the room is on. A restart invalidates any older-page
+  // request still in flight: merging it would splice a stretch of history onto
+  // a list it has a gap from, with nothing to show the seam.
+  const epoch = useRef(0);
+  // The newest message the reader has actually been shown. Anything after it in
+  // the list is what the unread pill counts. Undefined until the first page
+  // lands, when the follow effect below sets it.
+  const [seen, setSeen] = useState<string | undefined>(undefined);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
   const pending = useRef<{ id: string; content: string } | null>(null);
@@ -296,6 +351,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           // separated by a gap this page cannot bridge. Starting again from
           // this page keeps history walkable: its cursor leads back across the
           // gap, where merging would strand those messages out of reach.
+          //
+          // Everything the reader's position meant is discarded along with the
+          // list, so the room restarts the way it opens: at the newest message.
+          // Leaving it alone would keep a scrollTop pointing into replaced
+          // content, and an unread boundary that is no longer in the array at
+          // all — a pill counting messages nobody can name.
+          following.current = true;
+          viewAnchor.current = null;
+          epoch.current += 1;
+          setRestarts((count) => count + 1);
           setMessages((current) => {
             // Whatever the socket delivered while this request was in flight
             // is newer than this page, so it survives the restart.
@@ -440,13 +505,118 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     };
   }, [groupId, loadLatest]);
 
-  // Following the conversation means staying at the newest message. Keyed on
-  // the newest id so loading earlier messages leaves the reader where they are
-  // instead of yanking them back down.
+  // One helper writes the scroll offset, so every scroll event can be asked
+  // whether it came from the reader or from this component.
+  const scrollToOffset = useCallback((el: HTMLDivElement, top: number) => {
+    el.scrollTop = top;
+    lastWritten.current = el.scrollTop;
+    lastScrollTop.current = el.scrollTop;
+  }, []);
+
+  // Puts the element the reader was looking at back where it was. This is what
+  // absorbs a prepended page and, afterwards, each picture in it finishing its
+  // decode.
+  const restoreAnchor = useCallback(
+    (el: HTMLDivElement) => {
+      const held = viewAnchor.current;
+      if (!held || !el.contains(held.element)) return;
+      const now = held.element.getBoundingClientRect().top;
+      const drift = now - el.getBoundingClientRect().top - held.top;
+      if (drift !== 0) scrollToOffset(el, el.scrollTop + drift);
+    },
+    [scrollToOffset],
+  );
+
+  // Following the conversation means staying at the newest message. Scrolling
+  // up opts out: an arriving message must not snatch the screen away from
+  // someone reading history. This room's own sends are the exception, and they
+  // say so by name through `sentHere`.
+  //
+  // `restarts` is in the dependency list because the newest id is not enough.
+  // A room rebuilt after an outage keeps whatever the socket delivered while
+  // the page was being fetched, so its last message — and therefore `newest` —
+  // can be exactly what it already was. Without its own trigger the restart
+  // would only scroll if some other effect happened to move the list.
+  //
+  // The scroller is driven directly rather than by scrolling a sentinel into
+  // view: a sentinel stops at its own edge, which leaves the list's bottom
+  // padding below the fold and reads as "there is more down there".
   const newest = messages.at(-1)?.id;
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
-  }, [newest]);
+    const el = scroller.current;
+    // Checking only the newest message misses this room's own send when it
+    // lands in the same commit as someone else's — two socket frames handled
+    // in one React batch, both newer than what the reader had. The token still
+    // deserves to be consumed and still deserves to carry the reader down; it
+    // is just not necessarily last.
+    let asked = false;
+    for (const id of sentHere.current) {
+      if (messages.some((m) => m.client_message_id === id)) {
+        sentHere.current.delete(id);
+        asked = true;
+      }
+    }
+    if (!el || !(following.current || asked)) return;
+    scrollToOffset(el, el.scrollHeight);
+    following.current = true;
+    viewAnchor.current = null;
+    setSeen(newest);
+    // messages is read for the scan above; the effect is meant to run once per
+    // arriving commit, which `newest` already identifies, not once per
+    // reference change to a list whose contents (reactions, edits) can change
+    // without a new message arriving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newest, restarts, scrollToOffset]);
+
+  // What arrived while the reader was up in the history. Derived from the last
+  // message they were carried to rather than accumulated in a counter: a
+  // counter has to be right about every path that adds messages — a socket
+  // event, a reconnect replaying a page, a send — and drifts the first time one
+  // of them is missed.
+  //
+  // A missing boundary means the list no longer contains what the reader last
+  // saw. `findIndex` answers that with -1, which the arithmetic would turn into
+  // the whole list — a pill claiming fifty unread messages, most of them read
+  // long ago. The reconnect gap branch restarts the room instead of letting
+  // that happen, so this is the guard for a case that should not arise.
+  const seenIndex =
+    seen === undefined ? -1 : messages.findIndex((m) => m.id === seen);
+  const unread =
+    seen === newest || seenIndex < 0 ? 0 : messages.length - 1 - seenIndex;
+
+  // A page of older messages is inserted above the reader, which would push
+  // what they were reading down by the height of the whole page — at the top of
+  // the list that is the entire viewport and then some, so the reader lands
+  // thirty messages further back than where they asked to continue from.
+  //
+  // Before paint: doing this in a passive effect shows the reader one frame at
+  // the wrong offset.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && !following.current) restoreAnchor(el);
+  });
+
+  // Pictures and meal cards reach their final height after the commit that
+  // added them: an <img> with no reserved box is zero-high until it decodes,
+  // and a MealCard renders a placeholder while it fetches. Growing content
+  // dispatches no scroll event, so nothing above would run again.
+  //
+  // Both invariants are held here, because both are broken by the same thing.
+  // A reader at the bottom is kept there; a reader up in the history keeps the
+  // message they were reading, which is what makes a page of older photographs
+  // load without walking them backwards.
+  useEffect(() => {
+    const el = scroller.current;
+    const list = el?.firstElementChild;
+    if (!el || !list || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (following.current) scrollToOffset(el, el.scrollHeight);
+      else restoreAnchor(el);
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [restoreAnchor, scrollToOffset]);
 
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
@@ -480,6 +650,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       });
   }, [messages, roster, groupId]);
 
+  // Consumes this attempt's follow token the moment it can be proven stale: a
+  // retry sent after this room never saw the first response, the server
+  // having stored and broadcast that message anyway. The socket copy already
+  // consumed the token once; re-adding it before the retry is what a retry
+  // has to do, since it cannot know in advance it was unnecessary. Left alone,
+  // the token would sit in the set until some later, unrelated arrival ran the
+  // scanning effect and wrongly claimed it.
+  function settleSend(
+    clientMessageID: string,
+    current: ChatMessage[],
+    sent: ChatMessage,
+  ) {
+    if (current.some((m) => m.id === sent.id)) {
+      sentHere.current.delete(clientMessageID);
+    }
+    return merge(current, [sent], "newer");
+  }
+
   async function handleSend(event: React.SyntheticEvent) {
     event.preventDefault();
 
@@ -494,6 +682,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ? pending.current.id
         : crypto.randomUUID();
     pending.current = { id: clientMessageID, content };
+
+    // Armed before the request, not after it. The server broadcasts inside the
+    // same call that answers, so the socket copy usually wins the race; a token
+    // laid down on the response would be too late for the arrival it describes
+    // and would still be lying there when somebody else spoke.
+    sentHere.current.add(clientMessageID);
 
     // One send at a time. Overlapping sends would each want the retry slot,
     // and the loser would lose the id its retry depends on.
@@ -514,7 +708,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pending.current = null;
       setReplyTo(null);
-      setMessages((current) => merge(current, [sent], "newer"));
+      setMessages((current) => settleSend(clientMessageID, current, sent));
     } catch (caught) {
       setDraft(content);
       setError(
@@ -575,6 +769,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     mediaID: string;
     replyToID?: string;
   }) {
+    sentHere.current.add(attempt.clientMessageID);
     const sent = await apiFetch<ChatMessage>(
       `/api/v1/groups/${groupId}/messages`,
       {
@@ -593,7 +788,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     setReplyTo((current) =>
       current?.id === attempt.replyToID ? null : current,
     );
-    setMessages((current) => merge(current, [sent], "newer"));
+    setMessages((current) =>
+      settleSend(attempt.clientMessageID, current, sent),
+    );
   }
 
   // Answers whether the sticker actually went out, so the picker knows to
@@ -608,6 +805,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         : crypto.randomUUID();
     pendingSticker.current = { id: clientMessageID, stickerID };
 
+    sentHere.current.add(clientMessageID);
     setError(null);
     setSending(true);
     try {
@@ -624,7 +822,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
       pendingSticker.current = null;
       setReplyTo(null);
-      setMessages((current) => merge(current, [sent], "newer"));
+      setMessages((current) => settleSend(clientMessageID, current, sent));
       return true;
     } catch (caught) {
       setError(
@@ -659,10 +857,19 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     if (!before) return;
 
     setLoadingMore(true);
+    const requestedAt = epoch.current;
     try {
       const page = await apiFetch<MessagePage>(
         `/api/v1/groups/${groupId}/messages?before=${encodeURIComponent(before)}`,
       );
+      // A restart happened while this was in flight, so `before` was a cursor
+      // into a list that no longer exists. Merging this page would splice a
+      // stretch of history onto one it has a gap from, with nothing to show the
+      // seam, and would wind the cursor back to where it already was.
+      if (requestedAt !== epoch.current) return;
+
+      const el = scroller.current;
+      if (el) captureAnchor(el);
       setMessages((current) =>
         merge(
           reconcile(current, page.messages, settling.current),
@@ -737,16 +944,133 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return senders.get(userId)?.display_name || "這位成員";
   }
 
+  // Finds the element the reader is looking at, so later growth can be
+  // measured against it. Skips the pagination button and the empty-room line:
+  // neither survives a render the way a message does, and anchoring the
+  // button specifically fails on the page that removes it — the reader
+  // reaching the true start of history.
+  function findAnchor(el: HTMLDivElement) {
+    const top = el.getBoundingClientRect().top;
+    const list = el.firstElementChild;
+    const held = list
+      ? [...list.children].find(
+          (child) =>
+            !child.hasAttribute("data-anchor-skip") &&
+            child.getBoundingClientRect().bottom > top,
+        )
+      : undefined;
+    return held
+      ? { element: held, top: held.getBoundingClientRect().top - top }
+      : null;
+  }
+
+  // Used where the anchor has to exist before the mutation it will correct:
+  // captured this render, read by the layout effect committing the next one.
+  function captureAnchor(el: HTMLDivElement) {
+    viewAnchor.current = findAnchor(el);
+  }
+
+  // Used from scroll events, which a drag can fire several times before a
+  // paint. Each capture rescans every child's geometry — real cost on a long,
+  // low-end-phone conversation — so this caps it at once per frame rather than
+  // once per event.
+  //
+  // Landing a frame late is safe here because of when frames run, not because
+  // of who reads `viewAnchor`: the browser runs scroll steps, then animation
+  // frame callbacks — this one included — then resize observer steps, then
+  // paint, all within the same frame. React's commit is a task, not a step in
+  // that sequence, so it never lands between this write and the layout effect
+  // or ResizeObserver reading it. The value is current by the time either
+  // does. Moving this off `requestAnimationFrame` — a `setTimeout`, or a
+  // capture relocated elsewhere — would lose that ordering guarantee.
+  const anchorScheduled = useRef(false);
+  function captureAnchorThrottled(el: HTMLDivElement) {
+    if (anchorScheduled.current) return;
+    anchorScheduled.current = true;
+    requestAnimationFrame(() => {
+      anchorScheduled.current = false;
+      if (!following.current) viewAnchor.current = findAnchor(el);
+    });
+  }
+
+  // Moving up ends the follow; reaching the bottom starts it again.
+  //
+  // Order matters and has cost a bug each way round. Testing only "not at the
+  // bottom" treats a picture finishing its decode as the reader scrolling
+  // away, because the bottom moves while `scrollTop` does not. Giving "at the
+  // bottom" the last word is wrong too: dragging up through the slack would
+  // re-arm the follow and the next decoded image would slam the screen back
+  // down, fighting the hand on it.
+  //
+  // The exception to "moving up opts out" is landing exactly on the bottom —
+  // not within the slack, at it. iOS rubber-bands past the end and springs
+  // back, and every frame of that spring-back is a decreasing `scrollTop`: by
+  // the naive rule, flinging to the newest message would open with the reader
+  // opting out of following it.
+  //
+  // Scrolls this component performed are skipped entirely, and only once:
+  // this component writes `scrollTop` far more often than the reader taps the
+  // exact pixel it last wrote, so the marker is consumed on the very next
+  // event whether or not it matches. Leaving it standing would eventually
+  // coincide with a real scroll to the same offset — landing back at the
+  // bottom after reading history routinely lands on it — and silently stop
+  // reacting to that scroll forever after.
+  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+    const el = event.currentTarget;
+    const ownWrite =
+      lastWritten.current !== -1 && el.scrollTop === lastWritten.current;
+    lastWritten.current = -1;
+    if (ownWrite) return;
+
+    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
+    const atBottom = remaining < followSlack;
+    const overshotOrAtBottom = remaining <= 0;
+    const movedUp = el.scrollTop < lastScrollTop.current;
+    lastScrollTop.current = el.scrollTop;
+
+    if (movedUp && !overshotOrAtBottom) following.current = false;
+    else if (atBottom) following.current = true;
+
+    if (following.current) viewAnchor.current = null;
+    else captureAnchorThrottled(el);
+
+    // Cheap rather than free: React compares the value eagerly and skips the
+    // render, but only while this hook has no update already queued. The id
+    // guard keeps the call out of the queue during a flick through history.
+    if (atBottom && seen !== newest) setSeen(newest);
+  }
+
+  // The pill's job: put the reader back on the newest message.
+  function handleJumpToNewest() {
+    const el = scroller.current;
+    if (el) scrollToOffset(el, el.scrollHeight);
+    following.current = true;
+    viewAnchor.current = null;
+    setSeen(newest);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* The scroller and the list are separate elements on purpose: putting
-          `justify-end` on the scroller itself makes overflowing content
-          unreachable in Chrome, so the list grows to at least the scroller's
-          height and pins itself to the bottom from the inside. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
+      {/* The scroller is deliberately not a flex container.
+
+          As a flex item the list could not grow: a column flex container
+          shrinks its items to fit, `min-h-full` was satisfied at exactly the
+          scroller's height, and everything past that went into overflow. With
+          `justify-end` that overflow lands above the top edge — measured at
+          -2268px for forty messages — which no browser lets you scroll to, so
+          the history was simply gone.
+
+          As a block child the list grows with its content, and `justify-end`
+          only does something while there is free space to distribute: a short
+          conversation sits on the bottom, a long one scrolls. */}
+      <div
+        ref={scroller}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
         {before ? (
-          <li className="self-center">
+          <li className="self-center" data-anchor-skip>
             <Button
               variant="outline"
               size="sm"
@@ -759,7 +1083,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ) : null}
 
         {messages.length === 0 ? (
-          <li className="text-muted-foreground m-auto text-sm">
+          <li className="text-muted-foreground m-auto text-sm" data-anchor-skip>
             還沒有人說話，先開個頭吧。
           </li>
         ) : null}
@@ -977,8 +1301,34 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             </li>
           );
         })}
-        <div ref={bottom} />
       </ol>
+      </div>
+
+      {/* A zero-height anchor, so the pill can float over the conversation
+          without taking a row from it. It sits between the scroller and
+          everything below, which is why `bottom-2` lands just above whatever
+          the composer currently is — an error, a reply preview, the sticker
+          tray — instead of needing to know how tall that stack got. */}
+      <div className="relative">
+        {/* The button is not the announcement. Its label carries the count, so
+            a live region wrapped around it reads "3 則新訊息", "4 則新訊息",
+            "5 則新訊息" — once per arrival, interrupting a screen reader with
+            the same fact over and over. This says the one thing worth saying
+            and says it once: the text does not change while the pill is up, so
+            nothing re-announces until it has been away and come back. */}
+        <p className="sr-only" role="status" aria-live="polite">
+          {unread > 0 ? "下方有新訊息" : ""}
+        </p>
+        {unread > 0 ? (
+          <Button
+            size="sm"
+            onClick={handleJumpToNewest}
+            className="absolute bottom-2 left-1/2 -translate-x-1/2"
+          >
+            <ArrowDownIcon aria-hidden />
+            {unread} 則新訊息
+          </Button>
+        ) : null}
       </div>
 
       {error ? (
