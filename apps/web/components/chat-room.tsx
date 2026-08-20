@@ -596,11 +596,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     if (el && !following.current) restoreAnchor(el);
   });
 
-  // Both container resizing (keyboard opening/closing, window resizing) and
-  // content growth (pictures decoding, meal cards fetching, history prepending)
-  // are held by the same invariants here:
-  // - A reader at the bottom is kept there (scrolled to el.scrollHeight).
-  // - A reader up in the history keeps the message they were reading (restoreAnchor).
+  // Pictures and meal cards reach their final height after the commit that
+  // added them: an <img> with no reserved box is zero-high until it decodes,
+  // and a MealCard renders a placeholder while it fetches. Growing content
+  // and container resizes (keyboard opening/closing, window resizing) dispatch
+  // no scroll event, so nothing above would run again.
+  //
+  // Both invariants are held here, because both are broken by the same thing.
+  // A reader at the bottom is kept there; a reader up in the history keeps the
+  // message they were reading, which is what makes a page of older photographs
+  // load without walking them backwards.
   useEffect(() => {
     const el = scroller.current;
     const list = el?.firstElementChild;
@@ -608,7 +613,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
 
     const observer = new ResizeObserver(() => {
       if (following.current) scrollToOffset(el, el.scrollHeight);
-      else restoreAnchor(el);
+      else {
+        restoreAnchor(el);
+        if (el.scrollHeight - el.clientHeight - el.scrollTop <= 0) {
+          following.current = true;
+        }
+      }
     });
     observer.observe(list);
     observer.observe(el);
