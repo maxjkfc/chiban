@@ -2,7 +2,13 @@
 
 import { ImageIcon, SendHorizonalIcon, XIcon } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { Avatar } from "@/components/avatar";
 import { MealCard } from "@/components/meal-card";
@@ -61,6 +67,11 @@ const maxReconnectAttempts = 6;
 function reconnectDelay(failures: number): number {
   return Math.min(2000 * 2 ** (failures - 1), 30_000);
 }
+
+// How close to the bottom still counts as reading the newest message. Wide
+// enough to survive a fractional layout and a half-scrolled thumb, narrow
+// enough that anyone who has deliberately scrolled up is left alone.
+const followSlack = 64;
 
 /**
  * Brings messages already on screen up to date with what the server just said.
@@ -233,7 +244,13 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // The sticker tray's contents live in the picker: the quick rail cannot draw
   // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  // How far the reader was from the bottom when a page of older messages was
+  // requested. Set only by that request, so everything else leaves it null.
+  const anchor = useRef<number | null>(null);
+  // Whether the reader is still at the newest message. Starts true so the first
+  // page lands at the bottom; only a scroll ever changes it.
+  const following = useRef(true);
   // The id of the send currently in doubt, kept with the text it belongs to so
   // a retry of the same message reuses it and an edited one does not.
   const pending = useRef<{ id: string; content: string } | null>(null);
@@ -443,10 +460,37 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // Following the conversation means staying at the newest message. Keyed on
   // the newest id so loading earlier messages leaves the reader where they are
   // instead of yanking them back down.
+  //
+  // Scrolling up opts out: an arriving message must not snatch the screen away
+  // from someone reading history. Their own message is the exception — sending
+  // is asking to see it — and that is decided from who sent the newest message
+  // rather than from a flag each of the three send paths would have to set.
+  //
+  // The scroller is driven directly rather than by scrolling a sentinel into
+  // view: a sentinel stops at its own edge, which leaves the list's bottom
+  // padding below the fold and reads as "there is more down there".
   const newest = messages.at(-1)?.id;
+  const newestIsMine = !!me && messages.at(-1)?.user_id === me.id;
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
+    const el = scroller.current;
+    if (el && (following.current || newestIsMine)) el.scrollTop = el.scrollHeight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newest]);
+
+  // A page of older messages is inserted above the reader, which would push
+  // what they were reading down by the height of the whole page — at the top of
+  // the list that is the entire viewport and then some, so the reader lands
+  // thirty messages further back than where they asked to continue from.
+  //
+  // The distance from the bottom is what stays constant across a prepend, so it
+  // is what gets restored. Before paint: doing this in a passive effect shows
+  // the reader one frame at the wrong offset.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || anchor.current === null) return;
+    el.scrollTop = el.scrollHeight - anchor.current;
+    anchor.current = null;
+  });
 
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
@@ -663,6 +707,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       const page = await apiFetch<MessagePage>(
         `/api/v1/groups/${groupId}/messages?before=${encodeURIComponent(before)}`,
       );
+      const el = scroller.current;
+      if (el) anchor.current = el.scrollHeight - el.scrollTop;
       setMessages((current) =>
         merge(
           reconcile(current, page.messages, settling.current),
@@ -737,14 +783,35 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return senders.get(userId)?.display_name || "這位成員";
   }
 
+  // Reading history means the reader stops being carried to the bottom; coming
+  // back down opts them in again. Cheap enough to run on every scroll event:
+  // three layout reads and a comparison, no state and so no render.
+  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
+    const el = event.currentTarget;
+    following.current =
+      el.scrollHeight - el.clientHeight - el.scrollTop < followSlack;
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* The scroller and the list are separate elements on purpose: putting
-          `justify-end` on the scroller itself makes overflowing content
-          unreachable in Chrome, so the list grows to at least the scroller's
-          height and pins itself to the bottom from the inside. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
+      {/* The scroller is deliberately not a flex container.
+
+          As a flex item the list could not grow: a column flex container
+          shrinks its items to fit, `min-h-full` was satisfied at exactly the
+          scroller's height, and everything past that went into overflow. With
+          `justify-end` that overflow lands above the top edge — measured at
+          -2268px for forty messages — which no browser lets you scroll to, so
+          the history was simply gone.
+
+          As a block child the list grows with its content, and `justify-end`
+          only does something while there is free space to distribute: a short
+          conversation sits on the bottom, a long one scrolls. */}
+      <div
+        ref={scroller}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
         {before ? (
           <li className="self-center">
             <Button
@@ -977,7 +1044,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             </li>
           );
         })}
-        <div ref={bottom} />
       </ol>
       </div>
 
