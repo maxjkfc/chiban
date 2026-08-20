@@ -628,6 +628,27 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return () => observer.disconnect();
   }, [restoreAnchor, scrollToOffset]);
 
+  // iOS Safari auto-scrolls the document or ancestor containers when focusing
+  // an input, but never restores them when the keyboard closes or when the
+  // input is blurred. That leaves the entire page shifted upwards into negative
+  // space (header offscreen, scroller top clipped, scrollbar track displaced).
+  //
+  // This walks up the ancestor chain and snaps any shifted ancestor (and
+  // the window itself) back to (0, 0), while leaving the conversation's own
+  // `scroller` alone so message reading is uninterrupted.
+  const resetAncestorScroll = useCallback(() => {
+    window.scrollTo(0, 0);
+    if (document.documentElement) document.documentElement.scrollTop = 0;
+    if (document.body) document.body.scrollTop = 0;
+    let parent = composerBar.current?.parentElement;
+    while (parent) {
+      if (parent !== scroller.current && parent.scrollTop > 0) {
+        parent.scrollTop = 0;
+      }
+      parent = parent.parentElement;
+    }
+  }, []);
+
   // How far the composer bar needs to sit above the true bottom of the
   // window: 0 with no keyboard, the keyboard's height once one covers part
   // of the visual viewport. `offsetTop` also matters - iOS pans the visual
@@ -640,6 +661,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       setComposerOffset(
         Math.max(0, window.innerHeight - vv!.height - vv!.offsetTop),
       );
+      // When the keyboard dismisses (visualViewport height returns to window height),
+      // clear any phantom scroll that iOS left on the ancestor containers.
+      if (Math.abs(vv!.height - window.innerHeight) < 10) {
+        resetAncestorScroll();
+      }
     }
     apply();
     vv.addEventListener("resize", apply);
@@ -648,7 +674,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
     };
-  }, []);
+  }, [resetAncestorScroll]);
 
   // Taken out of flow, the composer bar no longer reserves its own space:
   // without this the last message would sit underneath it. Its height
@@ -764,6 +790,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
     } finally {
       setSending(false);
+      setTimeout(resetAncestorScroll, 100);
     }
   }
 
@@ -1470,6 +1497,15 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onFocus={() => {
+              // Give Safari a moment to finish its auto-pan, then snap the ancestors
+              // back so the header stays at the top of the screen while typing.
+              setTimeout(resetAncestorScroll, 300);
+            }}
+            onBlur={() => {
+              // Give Safari's keyboard dismissal animation a moment, then snap back.
+              setTimeout(resetAncestorScroll, 100);
+            }}
             placeholder="說點什麼…"
             aria-label="訊息"
             maxLength={2000}
