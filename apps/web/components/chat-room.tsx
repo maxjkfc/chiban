@@ -250,15 +250,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
-  // iOS Safari never resizes the layout viewport for the on-screen keyboard
-  // and never stops "helpfully" panning the page to keep the focused input
-  // clear of it, even though the composer's ancestors are all
-  // `overflow: hidden` - WebKit does this regardless of CSS overflow. The
-  // only element it leaves alone is one already taken out of that flow, so
-  // the composer bar is `position: fixed` and tracks `visualViewport`
-  // itself instead of asking the browser to keep it in view.
-  const composerBar = useRef<HTMLDivElement>(null);
-  const composerHeightRef = useRef(0);
   // What the reader is looking at while they are not being carried along: an
   // element and how far below the scroller's top edge it sat. Content growing
   // anywhere outside it — a prepended page, a picture finishing its decode —
@@ -627,101 +618,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return () => observer.disconnect();
   }, [restoreAnchor, scrollToOffset]);
 
-  // iOS Safari auto-scrolls the document or ancestor containers when focusing
-  // an input, but never restores them when the keyboard closes or when the
-  // input is blurred. That leaves the entire page shifted upwards into negative
-  // space (header offscreen, scroller top clipped, scrollbar track displaced).
-  //
-  // This walks up the ancestor chain and snaps any shifted ancestor (and
-  // the window itself) back to (0, 0), while leaving the conversation's own
-  // `scroller` alone so message reading is uninterrupted.
-  const resetAncestorScroll = useCallback(() => {
-    window.scrollTo(0, 0);
-    if (document.documentElement) document.documentElement.scrollTop = 0;
-    if (document.body) document.body.scrollTop = 0;
-    let parent = composerBar.current?.parentElement;
-    while (parent) {
-      if (parent !== scroller.current && parent.scrollTop > 0) {
-        parent.scrollTop = 0;
-      }
-      parent = parent.parentElement;
-    }
-  }, []);
-
-  // How far the composer bar needs to sit above the true bottom of the
-  // window: 0 with no keyboard, the keyboard's height once one covers part
-  // of the visual viewport. `offsetTop` also matters - iOS pans the visual
-  // viewport rather than resizing it, so the covered strip is the gap on
-  // both ends, not just `innerHeight - height`.
-  //
-  // Driven directly on the DOM rather than through React state: during the
-  // iOS keyboard slide-in animation, `visualViewport` dispatches events on
-  // every animation frame. Updating React state on every frame triggered
-  // dozens of full component re-renders per stroke, creating noticeable
-  // stutter behind the native 60/120Hz hardware animation. Direct DOM
-  // mutation updates in the exact same frame with zero React overhead.
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    function apply() {
-      const offset = Math.max(
-        0,
-        window.innerHeight - vv!.height - vv!.offsetTop,
-      );
-      const bar = composerBar.current;
-      const el = scroller.current;
-      if (bar) {
-        bar.style.transform = `translate3d(-50%, -${offset}px, 0)`;
-      }
-      if (el) {
-        el.style.paddingBottom = `${offset + composerHeightRef.current}px`;
-        if (following.current) {
-          el.scrollTop = el.scrollHeight;
-        }
-      }
-      // When the keyboard dismisses (visualViewport height returns to window height),
-      // clear any phantom scroll that iOS left on the ancestor containers.
-      if (Math.abs(vv!.height - window.innerHeight) < 10) {
-        resetAncestorScroll();
-      }
-    }
-    apply();
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
-    return () => {
-      vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
-    };
-  }, [resetAncestorScroll]);
-
-  // Taken out of flow, the composer bar no longer reserves its own space:
-  // without this the last message would sit underneath it. Its height
-  // changes with what's in it - a reply preview, an error, a picture upload
-  // retry - so this is measured rather than assumed.
-  useEffect(() => {
-    const el = composerBar.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) {
-        const height = entry.contentRect.height;
-        composerHeightRef.current = height;
-        const scrollEl = scroller.current;
-        const vv = window.visualViewport;
-        const offset = vv
-          ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
-          : 0;
-        if (scrollEl) {
-          scrollEl.style.paddingBottom = `${offset + height}px`;
-          if (following.current) {
-            scrollEl.scrollTop = scrollEl.scrollHeight;
-          }
-        }
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
   // is the ordinary case of inviting a friend and watching them arrive, so the
@@ -822,7 +718,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       );
     } finally {
       setSending(false);
-      setTimeout(resetAncestorScroll, 100);
     }
   }
 
@@ -1414,10 +1309,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         </ol>
       </div>
 
-      <div
-        ref={composerBar}
-        className="bg-background fixed bottom-0 left-1/2 z-10 flex w-full max-w-md -translate-x-1/2 flex-col will-change-transform"
-      >
+      <div className="bg-background border-border flex shrink-0 flex-col border-t pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {/* A zero-height anchor, so the pill can float over the conversation
             without taking a row from it. It sits at the top of this bar,
             which is why `bottom-2` lands just above whatever the bar
@@ -1492,10 +1384,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           showRail={draft.trim().length === 0}
         />
 
-        <form
-          onSubmit={handleSend}
-          className="border-border flex gap-2 border-t px-4 py-3"
-        >
+        <form onSubmit={handleSend} className="flex gap-2 px-4 pt-3">
           {/* A native label opens the picker without waiting for hydration,
               the same reason the record page does it this way. */}
           <label
@@ -1527,11 +1416,6 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-
-            onBlur={() => {
-              // Give Safari's keyboard dismissal animation a moment, then snap back.
-              setTimeout(resetAncestorScroll, 100);
-            }}
             placeholder="說點什麼…"
             aria-label="訊息"
             maxLength={2000}
