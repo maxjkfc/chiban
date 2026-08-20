@@ -690,6 +690,16 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     return () => observer.disconnect();
   }, []);
 
+  // When the composer moves up (keyboard opens) or grows (reply banner appears),
+  // if the reader was watching the latest messages, carry the scroller down
+  // so the conversation remains visible right above the raised composer bar.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && following.current) {
+      scrollToOffset(el, el.scrollHeight);
+    }
+  }, [composerOffset, composerHeight, scrollToOffset]);
+
   // Someone who joined after this page loaded is not on the roster, so their
   // first message would be drawn as an anonymous stranger until a reload. That
   // is the ordinary case of inviting a friend and watching them arrive, so the
@@ -1140,7 +1150,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         ref={scroller}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-y-auto"
-        style={{ paddingBottom: composerHeight }}
+        style={{ paddingBottom: composerOffset + composerHeight }}
       >
         <ol className="flex min-h-full flex-col justify-end gap-3.5 px-4 py-4">
           {before ? (
