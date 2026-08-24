@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { apiUrl } from "@/lib/api";
 import { getOrCreateDeviceId } from "@/lib/device";
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -18,9 +19,16 @@ export function usePushSubscription() {
   const [isSupported, setIsSupported] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>("default");
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window) {
+    if (typeof window === "undefined") return;
+
+    setIsIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    setIsStandalone(window.matchMedia("(display-mode: standalone)").matches);
+
+    if ("serviceWorker" in navigator && "PushManager" in window) {
       setIsSupported(true);
       setPermission(Notification.permission);
       navigator.serviceWorker.register("/sw.js").then((reg) => {
@@ -42,7 +50,9 @@ export function usePushSubscription() {
       }
 
       const reg = await navigator.serviceWorker.ready;
-      const keyRes = await fetch("/api/v1/push/vapid-public-key");
+      const keyRes = await fetch(apiUrl("/api/v1/push/vapid-public-key"), {
+        credentials: "include",
+      });
       const { public_key } = await keyRes.json();
       if (!public_key) return false;
 
@@ -55,8 +65,9 @@ export function usePushSubscription() {
       const auth = sub.getKey ? btoa(String.fromCharCode(...new Uint8Array(sub.getKey("auth")!))) : "";
       const deviceId = await getOrCreateDeviceId();
 
-      await fetch("/api/v1/push/subscribe", {
+      await fetch(apiUrl("/api/v1/push/subscribe"), {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           device_id: deviceId,
@@ -80,6 +91,8 @@ export function usePushSubscription() {
     isSupported,
     isSubscribed,
     permission,
+    isStandalone,
+    isIOS,
     subscribe,
   };
 }

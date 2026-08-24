@@ -1,4 +1,4 @@
-.PHONY: dev dev-deps down logs test test-db run-api run-web fmt vet migrate-up migrate-down
+.PHONY: dev dev-deps down logs test test-db run-api run-web fmt vet migrate-up migrate-down vapid-keys
 
 # Make does not read .env on its own, so without this every port and credential
 # below would silently disagree with what Compose actually uses the moment
@@ -29,6 +29,9 @@ export CHIBAN_STORAGE_EMULATOR_HOST = http://localhost:$(FAKE_GCS_HOST_PORT)
 # server reaches it either way. Stop the api container first.
 export CHIBAN_HTTP_ADDR = :$(API_HOST_PORT)
 export NEXT_PUBLIC_API_BASE_URL = http://localhost:$(API_HOST_PORT)
+export CHIBAN_VAPID_PUBLIC_KEY = $(VAPID_PUBLIC_KEY)
+export CHIBAN_VAPID_PRIVATE_KEY = $(VAPID_PRIVATE_KEY)
+export CHIBAN_VAPID_SUBJECT = $(or $(VAPID_SUBJECT),mailto:admin@example.com)
 
 # Tests get their own database. They TRUNCATE every table and roll migrations
 # back to zero, which must never happen to the database the app is running on.
@@ -86,3 +89,7 @@ migrate-up:
 
 migrate-down:
 	cd apps/api && go run ./cmd/migrate down
+
+## Print a fresh VAPID keypair for .env's VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY.
+vapid-keys:
+	cd apps/api && go run ./cmd/vapid-keys
