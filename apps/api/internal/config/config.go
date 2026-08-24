@@ -20,7 +20,10 @@ type Config struct {
 	// credentials. Sessions are cookie-based, so this cannot be a wildcard.
 	WebOrigin string
 	// SecureCookies must be true wherever the site is served over HTTPS.
-	SecureCookies bool
+	SecureCookies   bool
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
 }
 
 func Load() (Config, error) {
@@ -30,6 +33,9 @@ func Load() (Config, error) {
 		StorageEmulatorHost: os.Getenv("CHIBAN_STORAGE_EMULATOR_HOST"),
 		WebOrigin:           envOr("CHIBAN_WEB_ORIGIN", "http://localhost:3000"),
 		SecureCookies:       os.Getenv("CHIBAN_SECURE_COOKIES") == "true",
+		VAPIDPublicKey:      os.Getenv("CHIBAN_VAPID_PUBLIC_KEY"),
+		VAPIDPrivateKey:     os.Getenv("CHIBAN_VAPID_PRIVATE_KEY"),
+		VAPIDSubject:        envOr("CHIBAN_VAPID_SUBJECT", "mailto:admin@example.com"),
 	}
 	if c.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("CHIBAN_DATABASE_URL is required")

@@ -56,8 +56,9 @@ func run(logger *slog.Logger) error {
 			DB:            db,
 			Storage:       objects,
 			Logger:        logger,
-			WebOrigin:     cfg.WebOrigin,
-			SecureCookies: cfg.SecureCookies,
+			WebOrigin:      cfg.WebOrigin,
+			SecureCookies:  cfg.SecureCookies,
+			VAPIDPublicKey: cfg.VAPIDPublicKey,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

@@ -84,11 +84,13 @@ type Upload struct {
 	Data []byte
 }
 
-// Membership answers which groups a reader belongs to. The group domain
-// implements it; keeping it an interface here means meal never reads
-// membership tables it does not own.
 type Membership interface {
+	IsMember(ctx context.Context, userID, groupID uuid.UUID) (bool, error)
 	GroupIDsFor(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+}
+
+type PushNotifier interface {
+	NotifyMealShare(ctx context.Context, groupIDs []uuid.UUID, senderID uuid.UUID, mealID uuid.UUID)
 }
 
 // Announcer posts a meal into a group's conversation. The chat domain
@@ -104,10 +106,14 @@ type Service struct {
 	objects   storage.ObjectStorage
 	members   Membership
 	announcer Announcer
+	push      PushNotifier
 	now       func() time.Time
 	newName   func(userID uuid.UUID, at time.Time, ext string) string
 }
 
+func (s *Service) SetPushNotifier(p PushNotifier) {
+	s.push = p
+}
 func NewService(db *sql.DB, objects storage.ObjectStorage, members Membership, announcer Announcer) *Service {
 	return &Service{
 		db:        db,
@@ -360,6 +366,9 @@ func (s *Service) Share(ctx context.Context, ownerID, mealID uuid.UUID, groupIDs
 		if err := s.announcer.AnnounceMeal(ctx, ownerID, groupID, mealID); err != nil {
 			return err
 		}
+	}
+	if s.push != nil && len(groupIDs) > 0 {
+		s.push.NotifyMealShare(ctx, groupIDs, ownerID, mealID)
 	}
 	return nil
 }
