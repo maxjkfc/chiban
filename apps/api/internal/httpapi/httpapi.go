@@ -21,6 +21,7 @@ import (
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
 	"github.com/maxjkfc/chiban/apps/api/internal/sticker"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
+	"github.com/maxjkfc/chiban/apps/api/internal/push"
 )
 
 type Deps struct {
@@ -42,6 +43,10 @@ type Deps struct {
 	// SecureCookies marks session cookies Secure. False only for plain HTTP
 	// local development.
 	SecureCookies bool
+	Push          *push.Service
+	PushStore     *push.Store
+	VAPIDPublicKey string
+	FocusManager   *push.FocusManager
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -73,6 +78,23 @@ func NewRouter(d Deps) http.Handler {
 		// which groups a reader is in, and asks chat to announce the card.
 		d.Meal = meal.NewService(d.DB, d.Storage, d.Group, d.Chat)
 	}
+	if d.FocusManager == nil {
+		d.FocusManager = push.NewFocusManager()
+	}
+	if d.PushStore == nil && d.DB != nil {
+		d.PushStore = push.NewStore(d.DB)
+	}
+	if d.Push == nil && d.PushStore != nil {
+		d.Push = push.NewService(d.PushStore, push.VAPIDKeys{
+			PublicKey: d.VAPIDPublicKey,
+		}, d.FocusManager)
+	}
+	if d.Chat != nil && d.Push != nil {
+		d.Chat.SetPushNotifier(d.Push)
+	}
+	if d.Meal != nil && d.Push != nil {
+		d.Meal.SetPushNotifier(d.Push)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler(d))
@@ -81,6 +103,10 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", loginHandler(d))
 	mux.HandleFunc("POST /api/v1/auth/logout", logoutHandler(d))
 	mux.Handle("GET /api/v1/auth/me", d.Auth.RequireUser(meHandler()))
+	mux.HandleFunc("GET /api/v1/push/vapid-public-key", vapidPublicKeyHandler(d))
+	mux.Handle("POST /api/v1/push/subscribe", d.Auth.RequireUser(subscribePushHandler(d)))
+	mux.Handle("POST /api/v1/push/unsubscribe", d.Auth.RequireUser(unsubscribePushHandler(d)))
+	mux.Handle("GET /api/v1/ws/me", d.Auth.RequireUser(userEventsSocketHandler(d)))
 
 	mux.Handle("GET /api/v1/me/profile", d.Auth.RequireUser(getProfileHandler(d)))
 	mux.Handle("PATCH /api/v1/me/profile", d.Auth.RequireUser(patchProfileHandler(d)))

@@ -17,6 +17,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "吃伴",
   description: "和朋友一起記錄飲食",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "吃伴",
+  },
 };
 
 export const viewport: Viewport = {

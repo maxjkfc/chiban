@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Avatar } from "@/components/avatar";
+import { NotificationSettings } from "@/components/notification-settings";
 import { Tape } from "@/components/tape";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -216,6 +217,8 @@ export default function ProfilePage() {
         <span className="flex-1 text-sm font-bold">我的貼圖</span>
         <ChevronRightIcon className="text-muted-foreground size-4" aria-hidden />
       </Link>
+
+      <NotificationSettings />
 
       <Button variant="outline" onClick={handleLogout}>
         登出

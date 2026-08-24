@@ -145,9 +145,20 @@ const (
 // message carries per-reader reaction state that a single broadcast cannot.
 type Event struct {
 	Kind      string
+	GroupIDVal uuid.UUID
 	Message   Message
 	Reaction  ReactionChange
 	MessageID uuid.UUID
+}
+
+func (e Event) GroupID() uuid.UUID {
+	if e.GroupIDVal != uuid.Nil {
+		return e.GroupIDVal
+	}
+	if e.Message.GroupID != uuid.Nil {
+		return e.Message.GroupID
+	}
+	return uuid.Nil
 }
 
 // Cursor is where this message sits in its group's history.
@@ -191,6 +202,9 @@ type Membership interface {
 type Stickers interface {
 	BelongsTo(ctx context.Context, stickerID, userID uuid.UUID) (bool, error)
 }
+type PushNotifier interface {
+	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string, content string)
+}
 
 type Service struct {
 	store    *store
@@ -198,6 +212,7 @@ type Service struct {
 	hub      *Hub
 	objects  storage.ObjectStorage
 	stickers Stickers
+	push     PushNotifier
 }
 
 func NewService(
@@ -214,6 +229,9 @@ func NewService(
 		objects:  objects,
 		stickers: stickers,
 	}
+}
+func (s *Service) SetPushNotifier(p PushNotifier) {
+	s.push = p
 }
 
 // Send stores a message and then hands the stored row to everyone connected.
@@ -329,6 +347,9 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		// Only a genuinely new message is announced; a retry must not make
 		// everyone's screen show it twice.
 		s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
+		if s.push != nil {
+			s.push.NotifyMessage(ctx, groupID, userID, message.Type, message.Content)
+		}
 	}
 	return message, nil
 }
@@ -354,7 +375,7 @@ func (s *Service) Delete(ctx context.Context, userID, messageID uuid.UUID) error
 		return err
 	}
 	if deleted {
-		s.hub.Broadcast(message.GroupID, Event{Kind: EventDeleted, MessageID: messageID})
+		s.hub.Broadcast(message.GroupID, Event{Kind: EventDeleted, GroupIDVal: message.GroupID, MessageID: messageID})
 	}
 	return nil
 }
@@ -424,7 +445,8 @@ func (s *Service) changeReaction(
 
 	if changed {
 		s.hub.Broadcast(message.GroupID, Event{
-			Kind: EventReaction,
+			Kind:       EventReaction,
+			GroupIDVal: message.GroupID,
 			Reaction: ReactionChange{
 				MessageID: messageID,
 				UserID:    userID,
@@ -510,6 +532,9 @@ func (s *Service) Subscribe(ctx context.Context, userID, groupID uuid.UUID) (*Su
 		return nil, err
 	}
 	return s.hub.Subscribe(groupID), nil
+}
+func (s *Service) SubscribeUser(ctx context.Context, userID uuid.UUID) *UserSubscription {
+	return s.hub.SubscribeUser(userID)
 }
 
 // MayReceive reports whether this user is still entitled to a group's

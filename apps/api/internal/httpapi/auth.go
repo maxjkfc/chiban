@@ -62,8 +62,25 @@ func loginHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+type logoutRequest struct {
+	DeviceID string `json:"device_id"`
+}
+
 func logoutHandler(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		token := auth.TokenFromRequest(r)
+
+		// Optionally decode device_id if payload is provided
+		var req logoutRequest
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+
+		if req.DeviceID != "" && token != "" && d.PushStore != nil {
+			if user, err := d.Auth.UserForToken(r.Context(), token); err == nil {
+				_ = d.PushStore.DeleteByDevice(r.Context(), user.ID, req.DeviceID)
+			}
+		}
 		if err := d.Auth.EndSession(r.Context(), auth.TokenFromRequest(r)); err != nil {
 			writeAuthError(w, d, err)
 			return
