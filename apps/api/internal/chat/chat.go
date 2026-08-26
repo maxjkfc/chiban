@@ -144,11 +144,11 @@ const (
 // deletion sends only an id rather than the tombstoned message, because a
 // message carries per-reader reaction state that a single broadcast cannot.
 type Event struct {
-	Kind      string
+	Kind       string
 	GroupIDVal uuid.UUID
-	Message   Message
-	Reaction  ReactionChange
-	MessageID uuid.UUID
+	Message    Message
+	Reaction   ReactionChange
+	MessageID  uuid.UUID
 }
 
 func (e Event) GroupID() uuid.UUID {
@@ -203,7 +203,7 @@ type Stickers interface {
 	BelongsTo(ctx context.Context, stickerID, userID uuid.UUID) (bool, error)
 }
 type PushNotifier interface {
-	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string, content string)
+	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string)
 }
 
 type Service struct {
@@ -348,7 +348,7 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		// everyone's screen show it twice.
 		s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
 		if s.push != nil {
-			s.push.NotifyMessage(ctx, groupID, userID, message.Type, message.Content)
+			s.push.NotifyMessage(ctx, groupID, userID, message.Type)
 		}
 	}
 	return message, nil
