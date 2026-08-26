@@ -1,0 +1,284 @@
+import { writeFileSync } from 'node:fs';
+
+const C = {
+  coral: '#c13f29', coralInk: '#af2d18', coralDeep: '#8d1d0a', coralLite: '#ea6e52',
+  cream: '#f7f3e9', ink: '#2b221a', white: '#ffffff', mango: '#f9a129',
+  mint: '#37c695', sky: '#37aae3', berry: '#ac47c2', muted: '#6b5a4d',
+  border: '#e5ddd0', yellow: '#fae8a2', paper: '#efe7d8',
+};
+
+const CJK_SERIF = `Georgia, &#39;Songti TC&#39;, &#39;Noto Serif TC&#39;, &#39;Source Han Serif TC&#39;, serif`;
+const SANS = `-apple-system, &#39;PingFang TC&#39;, &#39;Noto Sans TC&#39;, system-ui, sans-serif`;
+
+/* ---------- the four icon masters, one 1024x1024 viewBox each ---------- */
+
+const art = {
+  A: `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  <g transform="rotate(-5 512 512)">
+    <rect x="228" y="196" width="568" height="640" rx="10" fill="${C.white}"/>
+    <rect x="276" y="244" width="472" height="452" rx="6" fill="${C.mango}"/>
+    <circle cx="512" cy="470" r="148" fill="${C.cream}"/>
+    <circle cx="512" cy="470" r="90" fill="${C.coralLite}"/>
+    <circle cx="470" cy="432" r="27" fill="${C.cream}" opacity="0.7"/>
+  </g>
+  <g transform="rotate(-45 340 290)">
+    <rect x="220" y="258" width="240" height="64" rx="3" fill="${C.mint}" opacity="0.92"/>
+  </g>`,
+
+  B: `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  <path d="M 240 168 H 784 a 96 96 0 0 1 96 96 V 664 a 96 96 0 0 1 -96 96 H 404 L 292 892 L 300 760 H 240 a 96 96 0 0 1 -96 -96 V 264 a 96 96 0 0 1 96 -96 Z" fill="${C.cream}"/>
+  <g stroke="${C.coral}" stroke-width="36" stroke-linecap="round">
+    <path d="M 348 398 L 688 266"/>
+    <path d="M 366 450 L 706 318"/>
+  </g>
+  <rect x="300" y="498" width="424" height="54" rx="27" fill="${C.coral}"/>
+  <path d="M 338 566 H 686 C 686 668, 608 712, 512 712 C 416 712, 338 668, 338 566 Z" fill="${C.coral}"/>`,
+
+  C: `
+  <defs>
+    <pattern id="grainC" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="3" fill="#b89f7c" opacity="0.2"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="${C.cream}"/>
+  <rect width="1024" height="1024" fill="url(#grainC)"/>
+  <g transform="rotate(9 380 510)">
+    <rect x="210" y="380" width="340" height="46" rx="23" fill="${C.coral}"/>
+    <path d="M 220 444 H 540 C 540 586, 474 644, 380 644 C 286 644, 220 586, 220 444 Z" fill="${C.coral}"/>
+  </g>
+  <g transform="rotate(-9 692 540)">
+    <rect x="552" y="426" width="280" height="42" rx="21" fill="${C.mango}"/>
+    <path d="M 561 486 H 823 C 823 604, 769 652, 692 652 C 615 652, 561 604, 561 486 Z" fill="${C.mango}"/>
+  </g>`,
+
+  D: `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  <rect x="144" y="144" width="736" height="736" rx="60" fill="none" stroke="${C.cream}" stroke-width="26"/>
+  <text x="512" y="516" text-anchor="middle" dominant-baseline="central"
+        font-family="${CJK_SERIF}" font-size="452" font-weight="700" fill="${C.cream}">吃</text>`,
+};
+
+const icon = (k, size) =>
+  `<svg viewBox="0 0 1024 1024" width="${size}" height="${size}" style="display: block" role="img" aria-label="方向 ${k}">${art[k]}</svg>`;
+
+/* an iOS-masked tile at any size */
+const tile = (k, size) =>
+  `<div style="width: ${size}px; height: ${size}px; border-radius: 22.37%; overflow: hidden; flex: none">${icon(k, size)}</div>`;
+
+const DIRS = {
+  A: {
+    name: '拍立得',
+    sub: 'Polaroid & tape',
+    idea: '直接沿用 app 的視覺語言:白色相紙、傾斜的角度、一條紙膠帶。看到 icon 就知道打開會是什麼。',
+    cost: '小尺寸只剩「一張白色斜方塊」,辨識度靠角度撐,跟其他筆記類 app 容易混。',
+  },
+  B: {
+    name: '一碗話',
+    sub: 'Bowl in a bubble',
+    idea: '對話框裡放一副碗筷。這支 app 的核心不是吃,是「吃完之後那段對話」,外框直接把它講出來。',
+    cost: '兩層資訊(框 + 碗),32px 時碗會糊成一團,只剩對話框可讀。',
+  },
+  C: {
+    name: '一起',
+    sub: 'Two bowls',
+    idea: '一大一小兩個碗,朝著彼此傾斜 —「伴」字的意思。唯一的淺色底,在一排深色 app 之間反而跳出來。',
+    cost: '淺色底在淺色桌布上會沉下去,而且縮到 32px 時兩個碗容易被看成一副墨鏡。',
+  },
+  D: {
+    name: '吃字印',
+    sub: 'Carved seal',
+    idea: '把「吃」刻成一枚印章。滿螢幕的英文 logo 跟漸層之間,一個中文字最不像別人。',
+    cost: '筆畫最多的一個,32px 一定糊。中文字對非中文使用者是一道牆。',
+  },
+};
+
+const head = (extra = '') => `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: ${SANS}; }
+    a { color: ${C.coralInk}; } a:hover { color: ${C.coralDeep}; }
+    ${extra}
+  </style>
+</helmet>`;
+
+const foot = `</x-dc>
+</body>
+</html>
+`;
+
+/* ---------- Main: the decision sheet ---------- */
+
+const col = (k) => {
+  const d = DIRS[k];
+  return `
+      <div style="display: flex; flex-direction: column; gap: 20px">
+        ${tile(k, 240)}
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; align-items: baseline; gap: 10px">
+            <span style="font-family: ${CJK_SERIF}; font-size: 15px; color: ${C.coralInk}; letter-spacing: 0.14em">${k}</span>
+            <span style="font-family: ${CJK_SERIF}; font-size: 27px; color: ${C.ink}">${d.name}</span>
+          </div>
+          <div style="font-size: 13px; color: ${C.muted}; letter-spacing: 0.06em">${d.sub}</div>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.75; color: ${C.ink}; text-wrap: pretty">${d.idea}</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.7; color: ${C.muted}; text-wrap: pretty">
+          <span style="color: ${C.coralInk}">取捨 &#183;</span> ${d.cost}
+        </p>
+        <div style="display: flex; align-items: flex-end; gap: 18px; margin-top: 4px; padding-top: 20px; border-top: 1px solid ${C.border}">
+          ${tile(k, 64)}
+          ${tile(k, 32)}
+          <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.08em; padding-bottom: 2px">64 &#183; 32</span>
+        </div>
+      </div>`;
+};
+
+writeFileSync('Main.dc.html', head() + `
+<div style="width: 1360px; min-height: 940px; box-sizing: border-box; padding: 64px; background: ${C.cream};
+            background-image: radial-gradient(circle at 1px 1px, rgba(184,159,124,0.22) 1px, transparent 0);
+            background-size: 7px 7px">
+  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 48px">
+    <h1 style="margin: 0; font-family: ${CJK_SERIF}; font-size: 44px; font-weight: 400; color: ${C.ink}">吃伴 &#183; App Icon 四個方向</h1>
+    <p style="margin: 0; font-size: 15px; color: ${C.muted}; line-height: 1.7">
+      顏色全部取自 v0.2 的 token,沒有新增色。挑一個,我再把它做成 <span style="font-family: ui-monospace, monospace; font-size: 13px; color: ${C.coralInk}">app/icon.svg</span> 跟 apple-touch-icon 接進去。
+    </p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 48px">
+    ${['A','B','C','D'].map(col).join('')}
+  </div>
+</div>` + foot);
+
+/* ---------- per-direction detail sheets, 1024 master at 1:1 ---------- */
+
+const rung = (k, size, label) => `
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 12px">
+          ${tile(k, size)}
+          <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.1em">${label}</span>
+        </div>`;
+
+for (const k of ['A', 'B', 'C', 'D']) {
+  const d = DIRS[k];
+  writeFileSync(`${k}_${d.sub.split(' ')[0]}.dc.html`, head() + `
+<div style="width: 1240px; min-height: 1620px; box-sizing: border-box; padding: 72px; background: ${C.cream};
+            background-image: radial-gradient(circle at 1px 1px, rgba(184,159,124,0.22) 1px, transparent 0);
+            background-size: 7px 7px; display: flex; flex-direction: column; gap: 56px">
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 14px">
+      <span style="font-family: ${CJK_SERIF}; font-size: 18px; color: ${C.coralInk}; letter-spacing: 0.16em">方向 ${k}</span>
+      <h1 style="margin: 0; font-family: ${CJK_SERIF}; font-size: 40px; font-weight: 400; color: ${C.ink}">${d.name}</h1>
+      <span style="font-size: 14px; color: ${C.muted}; letter-spacing: 0.08em">${d.sub}</span>
+    </div>
+    <p style="margin: 0; max-width: 720px; font-size: 15px; line-height: 1.8; color: ${C.ink}; text-wrap: pretty">${d.idea}</p>
+    <p style="margin: 0; max-width: 720px; font-size: 14px; line-height: 1.75; color: ${C.muted}; text-wrap: pretty">
+      <span style="color: ${C.coralInk}">取捨 &#183;</span> ${d.cost}
+    </p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 20px">
+    <div style="font-size: 12px; color: ${C.muted}; letter-spacing: 0.12em">1024 &#215; 1024 &#183; 母稿(實際大小)</div>
+    <div style="display: flex; gap: 40px; align-items: flex-start">
+      <div style="width: 1024px; height: 1024px; border-radius: 22.37%; overflow: hidden; flex: none; box-shadow: 0 24px 48px -32px rgba(64,40,24,0.55)">
+        ${icon(k, 1024)}
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 24px; padding-top: 44px; border-top: 1px solid ${C.border}">
+    <div style="font-size: 12px; color: ${C.muted}; letter-spacing: 0.12em">實際使用尺寸(1:1,沒有放大)</div>
+    <div style="display: flex; align-items: flex-end; gap: 56px">
+      ${rung(k, 180, '180 &#183; iPhone 主畫面 @3x')}
+      ${rung(k, 64, '64 &#183; 設定 / 分享')}
+      ${rung(k, 32, '32 &#183; favicon')}
+      <div style="display: flex; flex-direction: column; gap: 10px; padding-bottom: 4px; max-width: 300px">
+        <span style="font-size: 12px; color: ${C.coralInk}; letter-spacing: 0.1em">看這一排,不要看上面那張</span>
+        <span style="font-size: 13px; line-height: 1.7; color: ${C.muted}; text-wrap: pretty">icon 的成敗只在這三個尺寸。母稿好看不算數。</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 24px; padding-top: 44px; border-top: 1px solid ${C.border}">
+    <div style="font-size: 12px; color: ${C.muted}; letter-spacing: 0.12em">遮罩</div>
+    <div style="display: flex; align-items: center; gap: 48px">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px">
+        ${tile(k, 140)}
+        <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.1em">iOS squircle</span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px">
+        <div style="width: 140px; height: 140px; border-radius: 50%; overflow: hidden; flex: none">${icon(k, 140)}</div>
+        <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.1em">Android 圓形</span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px">
+        <div style="width: 140px; height: 140px; overflow: hidden; flex: none">${icon(k, 140)}</div>
+        <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.1em">無遮罩(方形)</span>
+      </div>
+    </div>
+  </div>
+</div>` + foot);
+}
+
+/* ---------- home screen comparison ---------- */
+
+const neighbour = (bg, mark, label) => `
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 7px; width: 62px">
+        <div style="width: 62px; height: 62px; border-radius: 22.37%; overflow: hidden; background: ${bg}; flex: none;
+                    box-shadow: 0 2px 6px -2px rgba(40,26,14,0.4)">
+          <svg viewBox="0 0 62 62" width="62" height="62" style="display: block">${mark}</svg>
+        </div>
+        <span style="font-size: 10px; color: #3a2f26; letter-spacing: 0.02em; white-space: nowrap">${label}</span>
+      </div>`;
+
+const candidate = (k, label) => `
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 7px; width: 62px">
+        <div style="box-shadow: 0 2px 6px -2px rgba(40,26,14,0.4); border-radius: 22.37%">${tile(k, 62)}</div>
+        <span style="font-size: 10px; color: #3a2f26; letter-spacing: 0.02em; white-space: nowrap">${label}</span>
+      </div>`;
+
+const NEIGHBOURS = [
+  ['#4a5c6a', `<g fill="none" stroke="#e6edf2" stroke-width="3.4" stroke-linecap="round"><rect x="17" y="20" width="28" height="22" rx="4"/><path d="M 24 42 v 5"/></g>`, '相機'],
+  ['#e8e4dc', `<g fill="none" stroke="#8a7f72" stroke-width="3.4" stroke-linecap="round"><path d="M 19 22 h 24"/><path d="M 19 31 h 24"/><path d="M 19 40 h 15"/></g>`, '備忘錄'],
+  ['#2f7d4f', `<g fill="none" stroke="#eaf5ee" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M 31 17 L 45 45 L 31 38 L 17 45 Z"/></g>`, '地圖'],
+  ['#3b6fd4', `<g fill="none" stroke="#eef3fd" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M 17 24 a 5 5 0 0 1 5 -5 h 18 a 5 5 0 0 1 5 5 v 12 a 5 5 0 0 1 -5 5 H 27 l -8 7 v -7 h -2 Z"/></g>`, '訊息'],
+  ['#d9d2c6', `<g fill="none" stroke="#6f6558" stroke-width="3.4" stroke-linecap="round"><circle cx="31" cy="31" r="13"/><path d="M 31 23 v 8 l 5 4"/></g>`, '時鐘'],
+  ['#1f1c1a', `<g fill="none" stroke="#f0ece6" stroke-width="3.4" stroke-linecap="round"><path d="M 22 41 V 26"/><path d="M 31 41 V 19"/><path d="M 40 41 V 32"/></g>`, '健康'],
+  ['#c9a227', `<g fill="none" stroke="#fdf7e4" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M 19 40 L 27 28 L 34 36 L 39 30 L 44 40 Z"/><circle cx="24" cy="23" r="3.2"/></g>`, '相簿'],
+  ['#7a5b8f', `<g fill="none" stroke="#f3ecf7" stroke-width="3.4" stroke-linecap="round"><circle cx="31" cy="31" r="12"/><circle cx="31" cy="31" r="3.4"/></g>`, '音樂'],
+];
+
+writeFileSync('HomeScreen.dc.html', head() + `
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: ${C.paper};
+            background-image: radial-gradient(circle at 1px 1px, rgba(150,124,92,0.2) 1px, transparent 0);
+            background-size: 6px 6px; display: flex; flex-direction: column; gap: 26px;
+            padding: 108px 26px 0">
+
+  <div style="display: grid; grid-template-columns: repeat(4, 62px); justify-content: space-between; gap: 22px 0">
+    ${candidate('A', '吃伴 A')}
+    ${candidate('B', '吃伴 B')}
+    ${candidate('C', '吃伴 C')}
+    ${candidate('D', '吃伴 D')}
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, 62px); justify-content: space-between; gap: 22px 0">
+    ${NEIGHBOURS.slice(0, 4).map(n => neighbour(...n)).join('')}
+    ${NEIGHBOURS.slice(4, 8).map(n => neighbour(...n)).join('')}
+  </div>
+</div>` + foot);
+
+console.log('wrote Main, HomeScreen, A/B/C/D');
+
+/* proof sheet — for my own eyes only, not part of the canvas */
+const proofRow = (size) => `<div style="display:flex;gap:28px;align-items:flex-end;margin:26px 0">
+  ${['A','B','C','D'].map(k => tile(k, size)).join('')}
+  <span style="font:12px ${SANS};color:#666">${size}px</span></div>`;
+writeFileSync('proof.html', `<!doctype html><meta charset="utf-8">
+<body style="margin:0;padding:36px;background:#efe7d8;font-family:${SANS}">
+${[256,180,120,62,32].map(proofRow).join('')}
+</body>`);
