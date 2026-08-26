@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { CHI, chiAt } from './glyph.mjs';
 
 const C = {
   coral: '#c13f29', coralInk: '#af2d18', coralDeep: '#8d1d0a', coralLite: '#ea6e52',
@@ -11,6 +12,39 @@ const CJK_SERIF = `Georgia, &#39;Songti TC&#39;, &#39;Noto Serif TC&#39;, &#39;S
 const SANS = `-apple-system, &#39;PingFang TC&#39;, &#39;Noto Sans TC&#39;, system-ui, sans-serif`;
 
 /* ---------- the four icon masters, one 1024x1024 viewBox each ---------- */
+
+
+
+/* ---------- 吃 as three seal treatments ----------
+   The outline comes from Noto Serif TC 900 (see glyph.mjs), so the letterform
+   is correct; the design is what is done to it. 朱文 / 白文 is the real
+   distinction between the two kinds of Chinese seal: character raised and
+   inked, or carved away and left blank. */
+
+const chi = (T, fill) =>
+  `<g transform="${chiAt(T)}"><path d="${CHI}" fill="${fill}"/></g>`;
+
+/* 朱文: the character is raised, so it takes the ink and the paper stays bare. */
+const D_VERMILION = `
+  <defs>
+    <pattern id="grainD" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="3" fill="#b89f7c" opacity="0.2"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="${C.cream}"/>
+  <rect width="1024" height="1024" fill="url(#grainD)"/>
+  <rect x="144" y="144" width="736" height="736" rx="60" fill="none" stroke="${C.coral}" stroke-width="30"/>
+  ${chi(560, C.coral)}`;
+
+/* 白文: the character is cut away, so the block inks around it. */
+const D_INTAGLIO = `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  <rect x="130" y="130" width="764" height="764" rx="56" fill="none" stroke="${C.cream}" stroke-width="22"/>
+  ${chi(600, C.cream)}`;
+
+const D_CROPPED = `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  ${chi(1180, C.cream)}`;
 
 const art = {
   A: `
@@ -53,11 +87,10 @@ const art = {
     <path d="M 561 486 H 823 C 823 604, 769 652, 692 652 C 615 652, 561 604, 561 486 Z" fill="${C.mango}"/>
   </g>`,
 
-  D: `
-  <rect width="1024" height="1024" fill="${C.coral}"/>
-  <rect x="144" y="144" width="736" height="736" rx="60" fill="none" stroke="${C.cream}" stroke-width="26"/>
-  <text x="512" y="516" text-anchor="middle" dominant-baseline="central"
-        font-family="${CJK_SERIF}" font-size="452" font-weight="700" fill="${C.cream}">吃</text>`,
+  D: `${D_INTAGLIO}`,
+  D1: `${D_VERMILION}`,
+  D2: `${D_INTAGLIO}`,
+  D3: `${D_CROPPED}`,
 };
 
 const icon = (k, size) =>
@@ -225,6 +258,49 @@ for (const k of ['A', 'B', 'C', 'D']) {
 </div>` + foot);
 }
 
+
+/* ---------- D 的三種刻法 ---------- */
+
+const HANDS = [
+  ['D1', '朱文', 'chi(560) 蓋在紙上', '字是凸起的,所以字吃墨、紙留白。最斯文的一個,也是唯一的淺色版。'],
+  ['D2', '白文', 'chi(600) 刻進石頭', '字被刻掉,墨留在字的四周。筆畫對比最強,縮到最小還撐得住。'],
+  ['D3', '破框', 'chi(1180) 讓邊界切它', '字大到被 icon 邊界裁掉。不再是一個字,是一個記號。'],
+];
+
+const hand = ([k, name, how, why]) => `
+      <div style="display: flex; flex-direction: column; gap: 18px">
+        ${tile(k, 256)}
+        <div style="display: flex; align-items: baseline; gap: 10px">
+          <span style="font-family: ${CJK_SERIF}; font-size: 26px; color: ${C.ink}">${name}</span>
+          <span style="font-family: ui-monospace, monospace; font-size: 12px; color: ${C.muted}">${how}</span>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.75; color: ${C.ink}; text-wrap: pretty">${why}</p>
+        <div style="display: flex; align-items: flex-end; gap: 18px; padding-top: 18px; border-top: 1px solid ${C.border}">
+          ${tile(k, 62)}
+          ${tile(k, 32)}
+          <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.08em; padding-bottom: 2px">62 &#183; 32</span>
+        </div>
+      </div>`;
+
+writeFileSync('D_Letterforms.dc.html', head() + `
+<div style="width: 1240px; min-height: 980px; box-sizing: border-box; padding: 72px; background: ${C.cream};
+            background-image: radial-gradient(circle at 1px 1px, rgba(184,159,124,0.22) 1px, transparent 0);
+            background-size: 7px 7px; display: flex; flex-direction: column; gap: 48px">
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <h1 style="margin: 0; font-family: ${CJK_SERIF}; font-size: 38px; font-weight: 400; color: ${C.ink}">D &#183; 三種刻法</h1>
+    <p style="margin: 0; max-width: 860px; font-size: 15px; line-height: 1.8; color: ${C.ink}; text-wrap: pretty">
+      第一版的「吃」是用系統字型排出來的,所以它長什麼樣子完全不是設計的結果 —— 那台機器剛好裝什麼字體就是什麼。
+      現在這個字是 Noto Serif TC 900 的外框(SIL OFL,可自由衍生),存成 path。明體本身的粗細對比跟三角襯線就是特色,而且在沒裝中文襯線體的裝置上長得一模一樣。
+    </p>
+    <p style="margin: 0; max-width: 860px; font-size: 14px; line-height: 1.75; color: ${C.muted}; text-wrap: pretty">
+      朱文與白文是真的兩種印:字凸起來吃墨,或字被刻掉、墨留四周。
+    </p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 44px">
+    ${HANDS.map(hand).join('')}
+  </div>
+</div>` + foot);
+
 /* ---------- home screen comparison ---------- */
 
 const neighbour = (bg, mark, label) => `
@@ -276,7 +352,7 @@ console.log('wrote Main, HomeScreen, A/B/C/D');
 
 /* proof sheet — for my own eyes only, not part of the canvas */
 const proofRow = (size) => `<div style="display:flex;gap:28px;align-items:flex-end;margin:26px 0">
-  ${['A','B','C','D'].map(k => tile(k, size)).join('')}
+  ${['D1','D2','D3','A','B','C'].map(k => tile(k, size)).join('')}
   <span style="font:12px ${SANS};color:#666">${size}px</span></div>`;
 writeFileSync('proof.html', `<!doctype html><meta charset="utf-8">
 <body style="margin:0;padding:36px;background:#efe7d8;font-family:${SANS}">

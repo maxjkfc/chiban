@@ -29,3 +29,8 @@ deploy/cloudflared/*.json
 /.design/**/proof.html
 /.design/**/proof.png
 /.design/**/shot.mjs
+
+# Font subset fetched by extract-glyph.py. Not committed: the outline it yields
+# lives in glyph.mjs, and shipping the font itself would drag the OFL notice
+# requirements along with it for no benefit.
+/.design/**/NotoSerifTC-*.ttf

@@ -1,17 +1,86 @@
 {
   "artboards": [
-    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1360, "h": 940,  "title": "四個方向" },
-    { "file": "HomeScreen.dc.html", "x": 1480, "y": 0,    "w": 390,  "h": 844,  "title": "主畫面實測" },
-    { "file": "A_Polaroid.dc.html", "x": 0,    "y": 1180, "w": 1240, "h": 1620, "title": "A · 拍立得" },
-    { "file": "B_Bowl.dc.html",     "x": 1360, "y": 1180, "w": 1240, "h": 1620, "title": "B · 一碗話" },
-    { "file": "C_Two.dc.html",      "x": 2720, "y": 1180, "w": 1240, "h": 1620, "title": "C · 一起" },
-    { "file": "D_Carved.dc.html",   "x": 4080, "y": 1180, "w": 1240, "h": 1620, "title": "D · 吃字印" }
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1360,
+      "h": 940,
+      "title": "四個方向"
+    },
+    {
+      "file": "HomeScreen.dc.html",
+      "x": 1480,
+      "y": 0,
+      "w": 390,
+      "h": 844,
+      "title": "主畫面實測"
+    },
+    {
+      "file": "A_Polaroid.dc.html",
+      "x": 0,
+      "y": 1180,
+      "w": 1240,
+      "h": 1620,
+      "title": "A · 拍立得"
+    },
+    {
+      "file": "B_Bowl.dc.html",
+      "x": 1360,
+      "y": 1180,
+      "w": 1240,
+      "h": 1620,
+      "title": "B · 一碗話"
+    },
+    {
+      "file": "C_Two.dc.html",
+      "x": 2720,
+      "y": 1180,
+      "w": 1240,
+      "h": 1620,
+      "title": "C · 一起"
+    },
+    {
+      "file": "D_Carved.dc.html",
+      "x": 4080,
+      "y": 1180,
+      "w": 1240,
+      "h": 1620,
+      "title": "D · 吃字印"
+    },
+    {
+      "file": "D_Letterforms.dc.html",
+      "x": 4080,
+      "y": 2920,
+      "w": 1240,
+      "h": 980,
+      "title": "D · 三種刻法"
+    }
   ],
   "annotations": [
-    { "id": "how-to-judge", "x": 1480, "y": 900, "w": 390,
-      "text": "先看這一張,再看大圖。\n\n62px 是 icon 真正被看到的大小 —— 旁邊那兩排是系統內建 app,用來對照。哪一個在餘光掃過去時你認得出來,哪一個就是對的。" },
-    { "id": "colour-note", "x": 0, "y": -180, "w": 520,
-      "text": "四個方向都只用 v0.2 既有的 token:珊瑚紅 #c13f29、奶油紙 #f7f3e9、芒果 #f9a129、薄荷 #37c695。沒有為了 icon 新增顏色。" }
+    {
+      "id": "how-to-judge",
+      "x": 1480,
+      "y": 900,
+      "w": 390,
+      "text": "先看這一張,再看大圖。\n\n62px 是 icon 真正被看到的大小 —— 旁邊那兩排是系統內建 app,用來對照。哪一個在餘光掃過去時你認得出來,哪一個就是對的。"
+    },
+    {
+      "id": "colour-note",
+      "x": 0,
+      "y": -180,
+      "w": 520,
+      "text": "四個方向都只用 v0.2 既有的 token:珊瑚紅 #c13f29、奶油紙 #f7f3e9、芒果 #f9a129、薄荷 #37c695。沒有為了 icon 新增顏色。"
+    },
+    {
+      "id": "glyph-note",
+      "x": 2720,
+      "y": 2960,
+      "w": 420,
+      "text": "「吃」不再是用字型排的。\n\n外框取自 Noto Serif TC 900(SIL OFL,可自由衍生)存成 path,所以在沒裝中文襯線體的裝置上也長得一樣 —— 這也解掉了 PR 裡列的那個限制。"
+    }
   ],
-  "launch": { "view": "canvas" }
+  "launch": {
+    "view": "canvas"
+  }
 }
