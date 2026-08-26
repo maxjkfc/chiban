@@ -12,12 +12,12 @@ import (
 
 // Notifier defines the interface for triggering push notifications from chat and meal events.
 type Notifier interface {
-	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string, content string)
+	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string)
 	NotifyMealShare(ctx context.Context, groupIDs []uuid.UUID, senderID uuid.UUID, mealID uuid.UUID)
 }
 
-func (s *Service) NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string, content string) {
-	body := content
+func (s *Service) NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string) {
+	var body string
 	switch messageType {
 	case "image":
 		body = "📷 傳送了一張圖片"
@@ -27,8 +27,9 @@ func (s *Service) NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID
 		body = "✨ 傳送了一個貼圖"
 	case "meal":
 		body = "🍱 分享了一餐"
-	}
-	if body == "" {
+	default:
+		// Push notifications never carry the message body itself, only that
+		// something new arrived — the content is only for the in-app toast.
 		body = "傳送了一則訊息"
 	}
 
