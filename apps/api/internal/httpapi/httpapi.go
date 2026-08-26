@@ -19,9 +19,9 @@ import (
 	"github.com/maxjkfc/chiban/apps/api/internal/group"
 	"github.com/maxjkfc/chiban/apps/api/internal/meal"
 	"github.com/maxjkfc/chiban/apps/api/internal/profile"
+	"github.com/maxjkfc/chiban/apps/api/internal/push"
 	"github.com/maxjkfc/chiban/apps/api/internal/sticker"
 	"github.com/maxjkfc/chiban/apps/api/internal/storage"
-	"github.com/maxjkfc/chiban/apps/api/internal/push"
 )
 
 type Deps struct {
@@ -42,11 +42,13 @@ type Deps struct {
 	WebOrigin string
 	// SecureCookies marks session cookies Secure. False only for plain HTTP
 	// local development.
-	SecureCookies bool
-	Push          *push.Service
-	PushStore     *push.Store
-	VAPIDPublicKey string
-	FocusManager   *push.FocusManager
+	SecureCookies   bool
+	Push            *push.Service
+	PushStore       *push.Store
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+	FocusManager    *push.FocusManager
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -86,7 +88,9 @@ func NewRouter(d Deps) http.Handler {
 	}
 	if d.Push == nil && d.PushStore != nil {
 		d.Push = push.NewService(d.PushStore, push.VAPIDKeys{
-			PublicKey: d.VAPIDPublicKey,
+			PublicKey:  d.VAPIDPublicKey,
+			PrivateKey: d.VAPIDPrivateKey,
+			Subject:    d.VAPIDSubject,
 		}, d.FocusManager)
 	}
 	if d.Chat != nil && d.Push != nil {
