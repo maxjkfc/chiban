@@ -17,29 +17,32 @@ type Notifier interface {
 }
 
 func (s *Service) NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string) {
-	var body string
-	switch messageType {
-	case "image":
-		body = "📷 傳送了一張圖片"
-	case "gif":
-		body = "🎞️ 傳送了一個 GIF"
-	case "sticker":
-		body = "✨ 傳送了一個貼圖"
-	case "meal":
-		body = "🍱 分享了一餐"
-	default:
-		// Push notifications never carry the message body itself, only that
-		// something new arrived — the content is only for the in-app toast.
-		body = "傳送了一則訊息"
-	}
-
 	s.NotifyGroup(ctx, groupID, senderID, Payload{
 		Title:   "吃伴",
-		Body:    body,
+		Body:    messageNotificationBody(messageType),
 		URL:     fmt.Sprintf("/groups/%s", groupID.String()),
 		GroupID: groupID,
 		Tag:     groupID.String(),
 	})
+}
+
+// messageNotificationBody maps a chat message type to a generic push body.
+// It never includes the message's actual content: push notifications only
+// announce that something new arrived, so the text stays lock-screen safe.
+// The full content is only shown in the in-app toast and the chat itself.
+func messageNotificationBody(messageType string) string {
+	switch messageType {
+	case "image":
+		return "📷 傳送了一張圖片"
+	case "gif":
+		return "🎞️ 傳送了一個 GIF"
+	case "sticker":
+		return "✨ 傳送了一個貼圖"
+	case "meal":
+		return "🍱 分享了一餐"
+	default:
+		return "傳送了一則訊息"
+	}
 }
 
 // NotifyMealShare handles cross-group meal sharing with recipient-level deduplication.
