@@ -46,6 +46,71 @@ const D_CROPPED = `
   <rect width="1024" height="1024" fill="${C.coral}"/>
   ${chi(1180, C.cream)}`;
 
+
+/* ---------- 黑貓 ----------
+   The cat is `--foreground` (#2b221a), not #000: the design system has no pure
+   black, and a true black next to warm cream reads as a hole rather than a cat.
+   All three put the cat on a light ground — #2b221a on coral is about 3:1,
+   which loses the silhouette, and a black cat is nothing but silhouette. */
+
+const GRAIN = `
+  <defs>
+    <pattern id="grainCat" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="3" fill="#b89f7c" opacity="0.2"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="${C.cream}"/>
+  <rect width="1024" height="1024" fill="url(#grainCat)"/>`;
+
+/* 偷吃的貓: ears and eyes clear the rim, the rest of the cat is behind it. */
+const CAT_RAID = `${GRAIN}
+  <g fill="${C.ink}">
+    <path d="M 344 306 L 398 178 L 458 292 Z"/>
+    <path d="M 680 306 L 626 178 L 566 292 Z"/>
+    <ellipse cx="512" cy="392" rx="192" ry="172"/>
+  </g>
+  <g fill="${C.cream}">
+    <ellipse cx="440" cy="378" rx="36" ry="27"/>
+    <ellipse cx="584" cy="378" rx="36" ry="27"/>
+  </g>
+  <g fill="${C.ink}">
+    <ellipse cx="440" cy="378" rx="10" ry="21"/>
+    <ellipse cx="584" cy="378" rx="10" ry="21"/>
+  </g>
+  <path d="M 490 442 H 534 L 512 468 Z" fill="${C.coral}"/>
+  <rect x="196" y="520" width="632" height="64" rx="32" fill="${C.coral}"/>
+  <path d="M 240 604 H 784 C 784 764, 664 828, 512 828 C 360 828, 240 764, 240 604 Z" fill="${C.coral}"/>
+  <g fill="${C.ink}">
+    <rect x="232" y="496" width="98" height="56" rx="28"/>
+    <rect x="696" y="496" width="98" height="56" rx="28"/>
+  </g>`;
+
+/* 貓耳碗: the bowl IS the cat. Two ears and a tail, nothing else. */
+const CAT_BOWL = `${GRAIN}
+  <g fill="${C.ink}">
+    <path d="M 300 442 L 354 302 L 418 442 Z"/>
+    <path d="M 606 442 L 670 302 L 724 442 Z"/>
+  </g>
+  <path d="M 628 752 C 762 792, 872 754, 888 656 C 896 606, 862 578, 834 598"
+        fill="none" stroke="${C.ink}" stroke-width="42" stroke-linecap="round"/>
+  <rect x="210" y="430" width="604" height="62" rx="31" fill="${C.coral}"/>
+  <path d="M 252 512 H 772 C 772 676, 656 740, 512 740 C 368 740, 252 676, 252 512 Z" fill="${C.coral}"/>`;
+
+/* 睡在對話框裡的貓: direction B's bubble, with the cat curled up asleep in it. */
+const CAT_SLEEP = `
+  <rect width="1024" height="1024" fill="${C.coral}"/>
+  <path d="M 240 168 H 784 a 96 96 0 0 1 96 96 V 664 a 96 96 0 0 1 -96 96 H 404 L 292 892 L 300 760 H 240 a 96 96 0 0 1 -96 -96 V 264 a 96 96 0 0 1 96 -96 Z" fill="${C.cream}"/>
+  <g fill="${C.ink}">
+    <ellipse cx="530" cy="556" rx="196" ry="128"/>
+    <path d="M 300 446 L 326 354 L 382 408 Z"/>
+    <path d="M 444 446 L 418 354 L 362 408 Z"/>
+    <circle cx="372" cy="500" r="86"/>
+  </g>
+  <path d="M 716 590 C 742 682, 640 706, 500 694"
+        fill="none" stroke="${C.ink}" stroke-width="38" stroke-linecap="round"/>
+  <path d="M 336 496 C 350 480, 376 480, 390 496"
+        fill="none" stroke="${C.cream}" stroke-width="12" stroke-linecap="round"/>`;
+
 const art = {
   A: `
   <rect width="1024" height="1024" fill="${C.coral}"/>
@@ -91,6 +156,9 @@ const art = {
   D1: `${D_VERMILION}`,
   D2: `${D_INTAGLIO}`,
   D3: `${D_CROPPED}`,
+  E1: `${CAT_RAID}`,
+  E2: `${CAT_BOWL}`,
+  E3: `${CAT_SLEEP}`,
 };
 
 const icon = (k, size) =>
@@ -301,6 +369,48 @@ writeFileSync('D_Letterforms.dc.html', head() + `
   </div>
 </div>` + foot);
 
+
+/* ---------- E · 黑貓 ---------- */
+
+const CATS = [
+  ['E1', '偷吃的貓', '一隻黑貓從碗緣探出頭,兩隻前爪搭在碗上。這是四個字說不出來的東西:吃飯這件事本身是開心的。'],
+  ['E2', '貓耳碗', '碗就是貓 —— 兩隻耳朵加一條尾巴,沒有別的。三個裡面縮到最小還撐得住的一個。'],
+  ['E3', '睡在對話框裡', 'B 的對話框,裡面睡了一隻貓。吃飽、聊完、睡著 —— 這支 app 的一天。'],
+];
+
+const catCol = ([k, name, why]) => `
+      <div style="display: flex; flex-direction: column; gap: 18px">
+        ${tile(k, 256)}
+        <div style="display: flex; align-items: baseline; gap: 10px">
+          <span style="font-family: ${CJK_SERIF}; font-size: 15px; color: ${C.coralInk}; letter-spacing: 0.14em">${k}</span>
+          <span style="font-family: ${CJK_SERIF}; font-size: 26px; color: ${C.ink}">${name}</span>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.75; color: ${C.ink}; text-wrap: pretty">${why}</p>
+        <div style="display: flex; align-items: flex-end; gap: 18px; padding-top: 18px; border-top: 1px solid ${C.border}">
+          ${tile(k, 62)}
+          ${tile(k, 32)}
+          <span style="font-size: 11px; color: ${C.muted}; letter-spacing: 0.08em; padding-bottom: 2px">62 &#183; 32</span>
+        </div>
+      </div>`;
+
+writeFileSync('E_BlackCat.dc.html', head() + `
+<div style="width: 1240px; min-height: 1020px; box-sizing: border-box; padding: 72px; background: ${C.cream};
+            background-image: radial-gradient(circle at 1px 1px, rgba(184,159,124,0.22) 1px, transparent 0);
+            background-size: 7px 7px; display: flex; flex-direction: column; gap: 48px">
+  <div style="display: flex; flex-direction: column; gap: 12px">
+    <h1 style="margin: 0; font-family: ${CJK_SERIF}; font-size: 38px; font-weight: 400; color: ${C.ink}">E &#183; 黑貓</h1>
+    <p style="margin: 0; max-width: 880px; font-size: 15px; line-height: 1.8; color: ${C.ink}; text-wrap: pretty">
+      貓是 <span style="font-family: ui-monospace, monospace; font-size: 13px">#2b221a</span>,不是純黑 —— 設計系統裡沒有純黑,而純黑貼著奶油紙會讀成一個洞,不是一隻貓。
+    </p>
+    <p style="margin: 0; max-width: 880px; font-size: 14px; line-height: 1.75; color: ${C.muted}; text-wrap: pretty">
+      三個都把貓放在淺底上。黑貓在珊瑚紅上只有 3:1 左右的對比,剪影會糊掉 —— 而黑貓除了剪影什麼都不是。
+    </p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 44px">
+    ${CATS.map(catCol).join('')}
+  </div>
+</div>` + foot);
+
 /* ---------- home screen comparison ---------- */
 
 const neighbour = (bg, mark, label) => `
@@ -343,6 +453,13 @@ writeFileSync('HomeScreen.dc.html', head() + `
   </div>
 
   <div style="display: grid; grid-template-columns: repeat(4, 62px); justify-content: space-between; gap: 22px 0">
+    ${candidate('E1', '吃伴 E1')}
+    ${candidate('E2', '吃伴 E2')}
+    ${candidate('E3', '吃伴 E3')}
+    <div></div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(4, 62px); justify-content: space-between; gap: 22px 0">
     ${NEIGHBOURS.slice(0, 4).map(n => neighbour(...n)).join('')}
     ${NEIGHBOURS.slice(4, 8).map(n => neighbour(...n)).join('')}
   </div>
@@ -352,7 +469,7 @@ console.log('wrote Main, HomeScreen, A/B/C/D');
 
 /* proof sheet — for my own eyes only, not part of the canvas */
 const proofRow = (size) => `<div style="display:flex;gap:28px;align-items:flex-end;margin:26px 0">
-  ${['D1','D2','D3','A','B','C'].map(k => tile(k, size)).join('')}
+  ${['E1','E2','E3','B','D2'].map(k => tile(k, size)).join('')}
   <span style="font:12px ${SANS};color:#666">${size}px</span></div>`;
 writeFileSync('proof.html', `<!doctype html><meta charset="utf-8">
 <body style="margin:0;padding:36px;background:#efe7d8;font-family:${SANS}">
