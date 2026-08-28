@@ -23,8 +23,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "吃伴";
   const options = {
     body: data.body || "您有一則新訊息",
-    icon: data.icon || "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
+    icon: data.icon || "/logo/chiban-icon-512.png",
+    badge: "/logo/chiban-icon-512.png",
     tag: data.tag || data.group_id || "chiban-notification",
     renotify: true,
     data: {
