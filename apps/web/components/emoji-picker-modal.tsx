@@ -64,10 +64,15 @@ export function EmojiPickerModal({
       return allCategories.filter((c) => c.id === activeTab);
     }
     return allCategories
-      .map((cat) => ({
-        ...cat,
-        emojis: cat.emojis.filter((emoji) => emoji.includes(query)),
-      }))
+      .map((cat) => {
+        const matchesCategory = cat.name.includes(query);
+        return {
+          ...cat,
+          emojis: matchesCategory
+            ? cat.emojis
+            : cat.emojis.filter((emoji) => emoji.includes(query)),
+        };
+      })
       .filter((cat) => cat.emojis.length > 0);
   }, [allCategories, activeTab, search]);
 
