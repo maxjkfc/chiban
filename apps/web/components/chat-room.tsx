@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -26,6 +27,8 @@ import {
   ApiRequestError,
   chatMediaUrl,
   chatSocketUrl,
+  dayLabel,
+  isDifferentDay,
   stickerUrl,
   timeOfDay,
   uploadChatMedia,
@@ -1098,219 +1101,235 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             </li>
           ) : null}
 
-          {messages.map((message) => {
+          {messages.map((message, index) => {
             const mine = message.user_id === me?.id;
             const sender = senders.get(message.user_id);
+            const previous = messages[index - 1];
+            const showDayDivider =
+              !previous ||
+              isDifferentDay(previous.created_at, message.created_at);
 
             return (
-              <li
-                key={message.id}
-                className={`flex max-w-[85%] items-end gap-2 ${
-                  mine ? "flex-row-reverse self-end" : "self-start"
-                }`}
-              >
-                {!mine ? (
-                  <Avatar
-                    mediaId={sender?.avatar_media_id}
-                    displayName={sender?.display_name || "這位成員"}
-                    className="size-8"
-                  />
+              <Fragment key={message.id}>
+                {showDayDivider ? (
+                  <li className="self-center" data-anchor-skip>
+                    <span className="text-muted-foreground bg-muted rounded-full px-3 py-1 text-xs">
+                      {dayLabel(message.created_at)}
+                    </span>
+                  </li>
                 ) : null}
-                <div
-                  className={`flex flex-col gap-1 ${mine ? "items-end" : ""}`}
+                <li
+                  className={`flex max-w-[85%] items-end gap-2 ${
+                    mine ? "flex-row-reverse self-end" : "self-start"
+                  }`}
                 >
-                  {/* Name and time sit together above the bubble: split across
+                  {!mine ? (
+                    <Avatar
+                      mediaId={sender?.avatar_media_id}
+                      displayName={sender?.display_name || "這位成員"}
+                      className="size-8"
+                    />
+                  ) : null}
+                  <div
+                    className={`flex flex-col gap-1 ${mine ? "items-end" : ""}`}
+                  >
+                    {/* Name and time sit together above the bubble: split across
                     it, the name reads as if it belonged to the message above. */}
-                  <span className="text-muted-foreground flex gap-2 text-xs">
-                    {!mine ? (
-                      <span>{sender?.display_name || "（尚未設定暱稱）"}</span>
-                    ) : null}
-                    <time dateTime={message.created_at}>
-                      {timeOfDay(message.created_at)}
-                    </time>
-                  </span>
-                  {message.reply_to ? (
-                    <blockquote
-                      className={`bg-muted border-primary/50 text-muted-foreground max-w-full rounded-md border-l-2 px-2.5 py-1.5 text-xs ${
-                        mine ? "text-right" : ""
-                      }`}
-                    >
-                      <span className="font-medium">
-                        {nameOf(message.reply_to.user_id)}
-                      </span>
-                      <span className="ms-1 line-clamp-2">
-                        {quoteOf(message.reply_to)}
-                      </span>
-                    </blockquote>
-                  ) : null}
-
-                  {message.deleted ? (
-                    <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
-                      （訊息已刪除）
-                    </p>
-                  ) : message.sticker_id ? (
-                    // A sticker sits on the page without a bubble: it is the
-                    // whole message, and a border around it would make it look
-                    // like an attachment. Tapping still opens the actions, so
-                    // reply and reaction work on one like on anything else.
-                    <button
-                      type="button"
-                      aria-expanded={openActions === message.id}
-                      onClick={() =>
-                        setOpenActions((open) =>
-                          open === message.id ? null : message.id,
-                        )
-                      }
-                      className="cursor-pointer"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={stickerUrl(message.sticker_id)}
-                        alt="貼圖"
-                        className="size-32 object-contain"
-                      />
-                    </button>
-                  ) : message.chat_media_id ? (
-                    // An image is still an ordinary message: tapping it opens
-                    // the same actions as any other, so reply and reaction work
-                    // on a picture too.
-                    <button
-                      type="button"
-                      aria-expanded={openActions === message.id}
-                      onClick={() =>
-                        setOpenActions((open) =>
-                          open === message.id ? null : message.id,
-                        )
-                      }
-                      className={`polaroid cursor-pointer ${mine ? "rotate-[1.2deg]" : "-rotate-[1.2deg]"}`}
-                    >
-                      {/* A GIF animates in an img tag; nothing re-encodes it on
-                        the way here. */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={chatMediaUrl(message.chat_media_id)}
-                        alt="傳送的圖片"
-                        className="max-h-64 w-52 rounded-[2px] object-cover"
-                      />
-                    </button>
-                  ) : message.meal_record_id ? (
-                    // A meal card is still an ordinary message: it can be
-                    // replied to and reacted to like any other, so the actions
-                    // open the same way.
-                    <button
-                      type="button"
-                      aria-expanded={openActions === message.id}
-                      onClick={() =>
-                        setOpenActions((open) =>
-                          open === message.id ? null : message.id,
-                        )
-                      }
-                      className="cursor-pointer text-start"
-                    >
-                      <MealCard mealId={message.meal_record_id} />
-                    </button>
-                  ) : (
-                    // The bubble is the tap target: a phone has no hover, and a
-                    // long press is a gesture people have to be taught.
-                    <button
-                      type="button"
-                      aria-expanded={openActions === message.id}
-                      onClick={() =>
-                        setOpenActions((open) =>
-                          open === message.id ? null : message.id,
-                        )
-                      }
-                      className={`shadow-pop cursor-pointer px-3.5 py-2.5 text-start text-sm leading-relaxed whitespace-pre-wrap ${
-                        mine
-                          ? "bg-primary text-primary-foreground rotate-[0.4deg] rounded-[1.125rem_1.125rem_0.375rem_1.125rem]"
-                          : "bg-card border-border -rotate-[0.4deg] rounded-[1.125rem_1.125rem_1.125rem_0.375rem] border"
-                      }`}
-                    >
-                      {message.content}
-                    </button>
-                  )}
-
-                  {message.reactions.length > 0 ? (
-                    <ul
-                      className={`flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}
-                    >
-                      {message.reactions.map((reaction) => (
-                        <li key={reaction.reaction_type}>
-                          <button
-                            type="button"
-                            aria-pressed={reaction.mine}
-                            onClick={() =>
-                              handleReact(message, reaction.reaction_type)
-                            }
-                            className={`relative flex h-8 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] ${
-                              reaction.mine
-                                ? "border-primary/50 bg-primary/10 text-primary-ink font-bold"
-                                : "bg-card border-border"
-                            }`}
-                          >
-                            <span aria-hidden>{reaction.reaction_type}</span>
-                            <span>{reaction.count}</span>
-                            <span className="sr-only">
-                              {reaction.mine ? "取消這個反應" : "加上這個反應"}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-
-                  {openActions === message.id ? (
-                    <div className="bg-card shadow-pop flex flex-wrap items-center gap-1 rounded-lg border p-1.5">
-                      {reactionTypes.map((reactionType) => (
-                        <button
-                          key={reactionType}
-                          type="button"
-                          onClick={() => handleReact(message, reactionType)}
-                          className="hover:bg-muted size-11 cursor-pointer rounded-full text-lg"
-                        >
-                          <span aria-hidden>{reactionType}</span>
-                          <span className="sr-only">{`用 ${reactionType} 回應`}</span>
-                        </button>
-                      ))}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setReplyTo(message);
-                          setOpenActions(null);
-                        }}
+                    <span className="text-muted-foreground flex gap-2 text-xs">
+                      {!mine ? (
+                        <span>
+                          {sender?.display_name || "（尚未設定暱稱）"}
+                        </span>
+                      ) : null}
+                      <time dateTime={message.created_at}>
+                        {timeOfDay(message.created_at)}
+                      </time>
+                    </span>
+                    {message.reply_to ? (
+                      <blockquote
+                        className={`bg-muted border-primary/50 text-muted-foreground max-w-full rounded-md border-l-2 px-2.5 py-1.5 text-xs ${
+                          mine ? "text-right" : ""
+                        }`}
                       >
-                        回覆
-                      </Button>
-                      {message.meal_record_id ? (
-                        // The card itself is the tap target for reacting, so
-                        // opening the meal lives here rather than as a link
-                        // nested inside that button. Styled through
-                        // buttonVariants, the same as the record links on the
-                        // Today page.
-                        <Link
-                          href={`/meals/${message.meal_record_id}`}
-                          className={buttonVariants({
-                            variant: "ghost",
-                            size: "sm",
-                          })}
-                        >
-                          查看紀錄
-                        </Link>
-                      ) : null}
-                      {mine ? (
+                        <span className="font-medium">
+                          {nameOf(message.reply_to.user_id)}
+                        </span>
+                        <span className="ms-1 line-clamp-2">
+                          {quoteOf(message.reply_to)}
+                        </span>
+                      </blockquote>
+                    ) : null}
+
+                    {message.deleted ? (
+                      <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-sm italic">
+                        （訊息已刪除）
+                      </p>
+                    ) : message.sticker_id ? (
+                      // A sticker sits on the page without a bubble: it is the
+                      // whole message, and a border around it would make it look
+                      // like an attachment. Tapping still opens the actions, so
+                      // reply and reaction work on one like on anything else.
+                      <button
+                        type="button"
+                        aria-expanded={openActions === message.id}
+                        onClick={() =>
+                          setOpenActions((open) =>
+                            open === message.id ? null : message.id,
+                          )
+                        }
+                        className="cursor-pointer"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={stickerUrl(message.sticker_id)}
+                          alt="貼圖"
+                          className="size-32 object-contain"
+                        />
+                      </button>
+                    ) : message.chat_media_id ? (
+                      // An image is still an ordinary message: tapping it opens
+                      // the same actions as any other, so reply and reaction work
+                      // on a picture too.
+                      <button
+                        type="button"
+                        aria-expanded={openActions === message.id}
+                        onClick={() =>
+                          setOpenActions((open) =>
+                            open === message.id ? null : message.id,
+                          )
+                        }
+                        className={`polaroid cursor-pointer ${mine ? "rotate-[1.2deg]" : "-rotate-[1.2deg]"}`}
+                      >
+                        {/* A GIF animates in an img tag; nothing re-encodes it on
+                        the way here. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={chatMediaUrl(message.chat_media_id)}
+                          alt="傳送的圖片"
+                          className="max-h-64 w-52 rounded-[2px] object-cover"
+                        />
+                      </button>
+                    ) : message.meal_record_id ? (
+                      // A meal card is still an ordinary message: it can be
+                      // replied to and reacted to like any other, so the actions
+                      // open the same way.
+                      <button
+                        type="button"
+                        aria-expanded={openActions === message.id}
+                        onClick={() =>
+                          setOpenActions((open) =>
+                            open === message.id ? null : message.id,
+                          )
+                        }
+                        className="cursor-pointer text-start"
+                      >
+                        <MealCard mealId={message.meal_record_id} />
+                      </button>
+                    ) : (
+                      // The bubble is the tap target: a phone has no hover, and a
+                      // long press is a gesture people have to be taught.
+                      <button
+                        type="button"
+                        aria-expanded={openActions === message.id}
+                        onClick={() =>
+                          setOpenActions((open) =>
+                            open === message.id ? null : message.id,
+                          )
+                        }
+                        className={`shadow-pop cursor-pointer px-3.5 py-2.5 text-start text-sm leading-relaxed whitespace-pre-wrap ${
+                          mine
+                            ? "bg-primary text-primary-foreground rotate-[0.4deg] rounded-[1.125rem_1.125rem_0.375rem_1.125rem]"
+                            : "bg-card border-border -rotate-[0.4deg] rounded-[1.125rem_1.125rem_1.125rem_0.375rem] border"
+                        }`}
+                      >
+                        {message.content}
+                      </button>
+                    )}
+
+                    {message.reactions.length > 0 ? (
+                      <ul
+                        className={`flex flex-wrap gap-1 ${mine ? "justify-end" : ""}`}
+                      >
+                        {message.reactions.map((reaction) => (
+                          <li key={reaction.reaction_type}>
+                            <button
+                              type="button"
+                              aria-pressed={reaction.mine}
+                              onClick={() =>
+                                handleReact(message, reaction.reaction_type)
+                              }
+                              className={`relative flex h-8 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-xs after:absolute after:-inset-x-1 after:-inset-y-1.5 after:content-[''] ${
+                                reaction.mine
+                                  ? "border-primary/50 bg-primary/10 text-primary-ink font-bold"
+                                  : "bg-card border-border"
+                              }`}
+                            >
+                              <span aria-hidden>{reaction.reaction_type}</span>
+                              <span>{reaction.count}</span>
+                              <span className="sr-only">
+                                {reaction.mine
+                                  ? "取消這個反應"
+                                  : "加上這個反應"}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    {openActions === message.id ? (
+                      <div className="bg-card shadow-pop flex flex-wrap items-center gap-1 rounded-lg border p-1.5">
+                        {reactionTypes.map((reactionType) => (
+                          <button
+                            key={reactionType}
+                            type="button"
+                            onClick={() => handleReact(message, reactionType)}
+                            className="hover:bg-muted size-11 cursor-pointer rounded-full text-lg"
+                          >
+                            <span aria-hidden>{reactionType}</span>
+                            <span className="sr-only">{`用 ${reactionType} 回應`}</span>
+                          </button>
+                        ))}
                         <Button
-                          variant="destructive"
+                          variant="ghost"
                           size="sm"
-                          onClick={() => handleDelete(message)}
+                          onClick={() => {
+                            setReplyTo(message);
+                            setOpenActions(null);
+                          }}
                         >
-                          刪除
+                          回覆
                         </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </li>
+                        {message.meal_record_id ? (
+                          // The card itself is the tap target for reacting, so
+                          // opening the meal lives here rather than as a link
+                          // nested inside that button. Styled through
+                          // buttonVariants, the same as the record links on the
+                          // Today page.
+                          <Link
+                            href={`/meals/${message.meal_record_id}`}
+                            className={buttonVariants({
+                              variant: "ghost",
+                              size: "sm",
+                            })}
+                          >
+                            查看紀錄
+                          </Link>
+                        ) : null}
+                        {mine ? (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDelete(message)}
+                          >
+                            刪除
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              </Fragment>
             );
           })}
         </ol>

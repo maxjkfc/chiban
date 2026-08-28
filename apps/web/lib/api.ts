@@ -359,3 +359,43 @@ export function timeOfDay(isoInstant: string): string {
     minute: "2-digit",
   });
 }
+
+/**
+ * "2026-03-15T04:05:06Z" to a day-divider label in the reader's own
+ * timezone: "今天" / "昨天", "3月15日" within the current year, otherwise
+ * "2025年3月15日".
+ */
+export function dayLabel(isoInstant: string): string {
+  const date = new Date(isoInstant);
+  const today = new Date();
+  const dateMidnight = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
+  const todayMidnight = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
+  const diffDays = Math.round((todayMidnight - dateMidnight) / 86_400_000);
+
+  if (diffDays === 0) return "今天";
+  if (diffDays === 1) return "昨天";
+  return date.toLocaleDateString("zh-TW", {
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+/** True when two instants fall on different calendar days in the reader's own timezone. */
+export function isDifferentDay(a: string, b: string): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() !== db.getFullYear() ||
+    da.getMonth() !== db.getMonth() ||
+    da.getDate() !== db.getDate()
+  );
+}
