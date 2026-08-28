@@ -111,6 +111,22 @@ const CAT_SLEEP = `
   <path d="M 336 496 C 350 480, 376 480, 390 496"
         fill="none" stroke="${C.cream}" stroke-width="12" stroke-linecap="round"/>`;
 
+
+/* ---------- 現行 logo ----------
+   Shipped to main in #51 (「湯湯水水」). Reproduced verbatim from
+   apps/web/public/logo/chiban-favicon.svg so the comparison is honest — its
+   own corner radius is dropped because tile() supplies the mask. */
+
+const SHIPPED = `
+  <rect width="1024" height="1024" fill="#C13F29"/>
+  <g transform="translate(-96.3 -86.8) scale(19.01)">
+    <path fill="#FFFBF4" d="M11 29 A21 21 0 0 0 53 29 Z"/>
+    <path transform="translate(21 27) rotate(-8) scale(1.12)" d="M-6.58 -2.39 L-7.5 -12.5 L-2.39 -6.58 A7 7 0 0 1 2.39 -6.58 L7.5 -12.5 L6.58 -2.39 A7 7 0 1 1 -6.58 -2.39 Z" fill="#C13F29" stroke="#C13F29" stroke-width="2.5" stroke-linejoin="round"/>
+    <path transform="translate(21 27) rotate(-8) scale(1.12)" d="M-6.58 -2.39 L-7.5 -12.5 L-2.39 -6.58 A7 7 0 0 1 2.39 -6.58 L7.5 -12.5 L6.58 -2.39 A7 7 0 1 1 -6.58 -2.39 Z" fill="#FFFBF4"/>
+    <path transform="translate(43.5 27) rotate(7) scale(1.05)" d="M-6.58 -2.39 L-7.5 -12.5 L-2.39 -6.58 A7 7 0 0 1 2.39 -6.58 L7.5 -12.5 L6.58 -2.39 A7 7 0 1 1 -6.58 -2.39 Z" fill="#C13F29" stroke="#C13F29" stroke-width="2.5" stroke-linejoin="round"/>
+    <path transform="translate(43.5 27) rotate(7) scale(1.05)" d="M-6.58 -2.39 L-7.5 -12.5 L-2.39 -6.58 A7 7 0 0 1 2.39 -6.58 L7.5 -12.5 L6.58 -2.39 A7 7 0 1 1 -6.58 -2.39 Z" fill="#FFFBF4"/>
+  </g>`;
+
 const art = {
   A: `
   <rect width="1024" height="1024" fill="${C.coral}"/>
@@ -159,6 +175,7 @@ const art = {
   E1: `${CAT_RAID}`,
   E2: `${CAT_BOWL}`,
   E3: `${CAT_SLEEP}`,
+  NOW: `${SHIPPED}`,
 };
 
 const icon = (k, size) =>
@@ -456,7 +473,7 @@ writeFileSync('HomeScreen.dc.html', head() + `
     ${candidate('E1', '吃伴 E1')}
     ${candidate('E2', '吃伴 E2')}
     ${candidate('E3', '吃伴 E3')}
-    <div></div>
+    ${candidate('NOW', '現行')}
   </div>
 
   <div style="display: grid; grid-template-columns: repeat(4, 62px); justify-content: space-between; gap: 22px 0">
