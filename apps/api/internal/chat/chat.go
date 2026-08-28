@@ -12,9 +12,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -32,12 +32,24 @@ var (
 	ErrNotAuthor = errors.New("chat: not the author")
 )
 
-// Reactions is the set V0.1 offers. Which emoji are on the list is a product
-// decision, so it lives here rather than in a database constraint.
-var Reactions = []string{"❤️", "😂", "🔥", "👏", "👀"}
+// DefaultReactions is the default set offered to users.
+var DefaultReactions = []string{"❤️", "😂", "🔥", "👏", "👀"}
 
-func isKnownReaction(reactionType string) bool {
-	return slices.Contains(Reactions, reactionType)
+// Reactions is retained for backwards compatibility with availableReactionsHandler.
+var Reactions = DefaultReactions
+
+func isValidReaction(reactionType string) bool {
+	trimmed := strings.TrimSpace(reactionType)
+	if trimmed == "" {
+		return false
+	}
+	// Database CHECK constraint enforces length between 1 and 16 bytes.
+	// In UTF-8, any standard single Emoji (including skin-tone modifiers or ZWJ sequences)
+	// fits comfortably within 16 bytes.
+	if len(trimmed) > 16 {
+		return false
+	}
+	return utf8.ValidString(trimmed)
 }
 
 // InvalidInputError describes input the caller can fix.
@@ -400,10 +412,10 @@ func (s *Service) changeReaction(
 	reactionType string,
 	add bool,
 ) error {
-	if !isKnownReaction(reactionType) {
+	if !isValidReaction(reactionType) {
 		return InvalidInputError{
 			Field:   "reaction_type",
-			Message: "is not one of the available reactions",
+			Message: "must be a valid emoji up to 16 bytes",
 		}
 	}
 

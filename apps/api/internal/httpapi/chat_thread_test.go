@@ -229,15 +229,31 @@ func TestNonMembersCannotReplyOrReact(t *testing.T) {
 	}
 }
 
-func TestAnUnknownReactionIsRefused(t *testing.T) {
+func TestAnInvalidReactionIsRefused(t *testing.T) {
 	app := testsupport.NewApp(t)
 
 	app.Onboard("mei@example.com", "小美")
 	group := app.CreateGroup("午餐團")
 	message := app.SendMessage(group.ID, "今天吃什麼")
 
-	if resp := app.PostReaction(message.ID, "🍕"); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	// Custom emojis (like pizza) are now valid reactions
+	if resp := app.PostReaction(message.ID, "🍕"); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("custom emoji reaction status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	// Empty string is refused
+	if resp := app.PostReaction(message.ID, ""); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty reaction status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	// Whitespace only is refused
+	if resp := app.PostReaction(message.ID, "   "); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("whitespace reaction status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	// Too long (>16 bytes) is refused
+	if resp := app.PostReaction(message.ID, "this_is_way_too_long_for_an_emoji"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("too long reaction status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }
 
