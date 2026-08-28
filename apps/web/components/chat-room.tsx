@@ -3,6 +3,7 @@
 import {
   ArrowDownIcon,
   ImageIcon,
+  PlusIcon,
   SendHorizonalIcon,
   XIcon,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
 } from "react";
 
 import { Avatar } from "@/components/avatar";
+import { EmojiPickerModal } from "@/components/emoji-picker-modal";
 import { MealCard } from "@/components/meal-card";
 import { StickerFaceIcon, StickerPicker } from "@/components/sticker-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -39,6 +41,11 @@ import {
   type SocketEvent,
   type User,
 } from "@/lib/api";
+import {
+  addRecentReaction,
+  getCustomPinnedReactions,
+  saveCustomPinnedReactions,
+} from "@/lib/emoji-data";
 import { cn } from "@/lib/utils";
 
 /**
@@ -249,6 +256,8 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   // at reply and reactions without a hover state or a long-press gesture.
   const [openActions, setOpenActions] = useState<string | null>(null);
   const [reactionTypes, setReactionTypes] = useState<string[]>([]);
+  const [emojiPickerTarget, setEmojiPickerTarget] =
+    useState<ChatMessage | null>(null);
   // The sticker tray's contents live in the picker: the quick rail cannot draw
   // itself without them, so they are no longer loaded lazily on first open.
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -409,7 +418,11 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       // offering an emoji the API would refuse.
       apiFetch<{ reaction_types: string[] }>("/api/v1/reaction-types", {
         signal: controller.signal,
-      }).then((available) => setReactionTypes(available.reaction_types)),
+      }).then((available) => {
+        // Load custom pinned reactions from localStorage or fallback to server defaults
+        const custom = getCustomPinnedReactions();
+        setReactionTypes(custom.length > 0 ? custom : available.reaction_types);
+      }),
     ])
       .then(([user]) => setMe(user))
       .catch((caught: unknown) => {
@@ -898,6 +911,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
   async function handleReact(message: ChatMessage, reactionType: string) {
     if (!me) return;
 
+    addRecentReaction(reactionType);
     const mine =
       message.reactions.find((r) => r.reaction_type === reactionType)?.mine ??
       false;
@@ -1290,6 +1304,18 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
                             <span className="sr-only">{`用 ${reactionType} 回應`}</span>
                           </button>
                         ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenActions(null);
+                            setEmojiPickerTarget(message);
+                          }}
+                          className="hover:bg-muted text-muted-foreground hover:text-foreground flex size-11 cursor-pointer items-center justify-center rounded-full text-base transition-colors"
+                          title="選擇更多表情或自訂快捷"
+                        >
+                          <PlusIcon className="size-5" />
+                          <span className="sr-only">更多表情回應與自訂</span>
+                        </button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1452,6 +1478,24 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           </Button>
         </form>
       </div>
+
+      <EmojiPickerModal
+        open={emojiPickerTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEmojiPickerTarget(null);
+        }}
+        pinnedReactions={reactionTypes}
+        onUpdatePinned={(newPinned) => {
+          setReactionTypes(newPinned);
+          saveCustomPinnedReactions(newPinned);
+        }}
+        onSelectEmoji={(emoji) => {
+          if (emojiPickerTarget) {
+            handleReact(emojiPickerTarget, emoji);
+            setEmojiPickerTarget(null);
+          }
+        }}
+      />
     </div>
   );
 }
