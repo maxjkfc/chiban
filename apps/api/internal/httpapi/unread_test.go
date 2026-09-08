@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"database/sql"
 	"net/http"
 	"testing"
 
@@ -244,5 +245,74 @@ func TestMarkReadCannotMoveBackward(t *testing.T) {
 	// Replaying an older cursor must not undo the newer one.
 	if g := app.ReadGroup(group.ID, first.ID); g.HasUnread || g.UnreadCount != 0 {
 		t.Fatalf("after replaying an older read = %+v, want still 0 unread", g)
+	}
+}
+
+// A hard delete of the chat_messages row a read cursor points at must
+// succeed and leave the cursor reset rather than half-formed: the
+// last_read_message_id FK's ON DELETE SET NULL only clears that one column,
+// so without help from migration 00016's trigger, the row is left with a
+// non-NULL last_read_message_created_at paired against a NULL id, which
+// violates group_members_last_read_consistent and the DELETE itself fails.
+func TestHardDeletingACursorTargetMessageSucceeds(t *testing.T) {
+	app := testsupport.NewApp(t)
+
+	app.Onboard("mei@example.com", "小美")
+	group := app.CreateGroup("午餐團")
+	invite := app.CreateInvite(group.ID)
+	mei := app.SessionCookie()
+
+	app.Onboard("kai@example.com", "阿凱")
+	app.JoinGroup(invite.Code)
+	kai := app.SessionCookie()
+
+	app.SetSessionCookie(mei)
+	target := app.SendMessage(group.ID, "吃飯了嗎")
+	app.SendMessage(group.ID, "在等你")
+
+	app.SetSessionCookie(kai)
+	app.ReadGroup(group.ID, target.ID)
+
+	// Sanity check: the cursor is a real, non-NULL pair before the delete.
+	var cursorID sql.NullString
+	var cursorCreatedAt sql.NullTime
+	if err := app.DB.QueryRowContext(t.Context(), `
+		SELECT last_read_message_id, last_read_message_created_at
+		FROM group_members gm
+		JOIN users u ON u.id = gm.user_id
+		WHERE gm.group_id = $1 AND u.email = 'kai@example.com'
+	`, group.ID).Scan(&cursorID, &cursorCreatedAt); err != nil {
+		t.Fatalf("query cursor before delete: %v", err)
+	}
+	if !cursorID.Valid || !cursorCreatedAt.Valid {
+		t.Fatalf("cursor before delete = (%v, %v), want both set", cursorID, cursorCreatedAt)
+	}
+
+	// Hard delete, unlike the app's own soft delete, is what a retention job
+	// or an admin cleanup does. It must not fail with a CHECK violation.
+	if _, err := app.DB.ExecContext(t.Context(),
+		`DELETE FROM chat_messages WHERE id = $1`, target.ID); err != nil {
+		t.Fatalf("hard delete of cursor-target message: %v", err)
+	}
+
+	// The FK's ON DELETE SET NULL plus the 00016 trigger must leave the pair
+	// fully NULL, not id-NULL/timestamp-set.
+	if err := app.DB.QueryRowContext(t.Context(), `
+		SELECT last_read_message_id, last_read_message_created_at
+		FROM group_members gm
+		JOIN users u ON u.id = gm.user_id
+		WHERE gm.group_id = $1 AND u.email = 'kai@example.com'
+	`, group.ID).Scan(&cursorID, &cursorCreatedAt); err != nil {
+		t.Fatalf("query cursor after delete: %v", err)
+	}
+	if cursorID.Valid || cursorCreatedAt.Valid {
+		t.Fatalf("cursor after delete = (%v, %v), want both NULL", cursorID, cursorCreatedAt)
+	}
+
+	// A reset cursor reads as "never read": the remaining message in the
+	// group counts as unread again rather than the API erroring out.
+	app.SetSessionCookie(kai)
+	if g := app.GetGroup(group.ID); !g.HasUnread || g.UnreadCount != 1 {
+		t.Fatalf("kai's group after the cursor target was hard-deleted = %+v, want 1 unread", g)
 	}
 }
