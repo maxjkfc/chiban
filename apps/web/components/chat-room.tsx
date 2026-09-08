@@ -21,6 +21,7 @@ import { Avatar } from "@/components/avatar";
 import { EmojiPickerModal } from "@/components/emoji-picker-modal";
 import { MealCard } from "@/components/meal-card";
 import { StickerFaceIcon, StickerPicker } from "@/components/sticker-picker";
+import { useUnreadGroups } from "@/components/unread-provider";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Message } from "@/components/ui/message";
@@ -46,6 +47,7 @@ import {
   getCustomPinnedReactions,
   saveCustomPinnedReactions,
 } from "@/lib/emoji-data";
+import { latestMessageId } from "@/lib/unread";
 import { cn } from "@/lib/utils";
 
 /**
@@ -238,6 +240,7 @@ function quoteOf(parent: {
 }
 
 export function ChatRoom({ groupId, members }: ChatRoomProps) {
+  const { markGroupRead } = useUnreadGroups();
   // Held in state, not read straight from the prop: the list is fetched once
   // when the page loads, and someone invited a minute ago is not on it. Their
   // first message is exactly when their name is needed.
@@ -351,6 +354,10 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
             ),
           );
           setBefore(page.before);
+          const newestMessageId = latestMessageId(page.messages);
+          if (newestMessageId) {
+            void markGroupRead(groupId, newestMessageId);
+          }
           return;
         }
 
@@ -397,7 +404,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         setBefore((current) => current ?? page.before);
       });
     },
-    [groupId],
+    [groupId, markGroupRead],
   );
 
   useEffect(() => {
