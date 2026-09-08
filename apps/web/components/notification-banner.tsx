@@ -23,10 +23,12 @@ export function NotificationBanner() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let heartbeatInterval: NodeJS.Timeout | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
     let isClosed = false;
 
     async function connect() {
       const deviceId = await getOrCreateDeviceId();
+      if (isClosed) return;
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.host;
       const wsUrl = `${proto}//${host}/api/v1/ws/me`;
@@ -93,8 +95,13 @@ export function NotificationBanner() {
       };
 
       ws.onclose = () => {
+        clearInterval(heartbeatInterval!);
+        heartbeatInterval = null;
         if (!isClosed) {
-          setTimeout(() => connect(), 3000);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            void connect();
+          }, 3000);
         }
       };
     }
@@ -102,6 +109,7 @@ export function NotificationBanner() {
     return () => {
       isClosed = true;
       clearInterval(heartbeatInterval!);
+      clearTimeout(reconnectTimer!);
       ws?.close();
     };
   }, [currentGroupId]);

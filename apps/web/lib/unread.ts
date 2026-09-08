@@ -234,9 +234,9 @@ export function recordGroupMessage(
 export function recordGlobalGroupMessage(
   state: UnreadState,
   event: GroupMessageEventDetail,
-  isOwnMessage = false,
+  currentUserId: string,
 ): UnreadState {
-  return recordGroupMessage(state, event.groupId, isOwnMessage);
+  return recordGroupMessage(state, event.groupId, event.userId === currentUserId);
 }
 
 /** Adds a newly-created group without allowing a stale GET to remove it. */

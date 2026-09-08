@@ -157,7 +157,7 @@ test("a global websocket message updates a group outside the open room", () => {
     groupId: "group-2",
     messageId: "message-2",
     userId: "member-2",
-  });
+  }, "current-user");
 
   assert.equal(
     updated.groups?.find((item) => item.id === "group-1")?.has_unread,
@@ -171,6 +171,38 @@ test("a global websocket message updates a group outside the open room", () => {
     updated.groups?.find((item) => item.id === "group-2")?.unread_count,
     1,
   );
+});
+
+test("the global websocket path ignores a message from the authenticated user", () => {
+  const loaded = applyUnreadRefresh(
+    createUnreadState(),
+    [group({ unread_count: 0, has_unread: false })],
+    0,
+    1,
+    1,
+  );
+  const ownMessage = recordGlobalGroupMessage(
+    loaded,
+    {
+      groupId: "group-1",
+      messageId: "own-message",
+      userId: "current-user",
+    },
+    "current-user",
+  );
+  const incomingMessage = recordGlobalGroupMessage(
+    loaded,
+    {
+      groupId: "group-1",
+      messageId: "incoming-message",
+      userId: "member-2",
+    },
+    "current-user",
+  );
+
+  assert.strictEqual(ownMessage, loaded);
+  assert.equal(incomingMessage.groups?.[0].has_unread, true);
+  assert.equal(incomingMessage.groups?.[0].unread_count, 1);
 });
 
 test("a message in another group does not invalidate a pending read", () => {
@@ -216,7 +248,7 @@ test("a stale refresh cannot resurrect a read cursor after another group changes
     groupId: "group-2",
     messageId: "message-2",
     userId: "member-2",
-  });
+  }, "current-user");
 
   const resolved = applyUnreadRefresh(
     withOtherGroupMessage,

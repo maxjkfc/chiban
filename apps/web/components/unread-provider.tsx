@@ -2,7 +2,12 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { apiFetch, markGroupRead as markGroupReadRequest, type Group } from "@/lib/api";
+import {
+  apiFetch,
+  markGroupRead as markGroupReadRequest,
+  type Group,
+  type User,
+} from "@/lib/api";
 import {
   addGroupToUnreadState,
   applyGroupReadResultIfCurrentRevision,
@@ -77,6 +82,10 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
   }, [refreshGroups]);
 
   useEffect(() => {
+    let cancelled = false;
+    let currentUserId: string | undefined;
+    const pendingEvents: GroupMessageEventDetail[] = [];
+
     function handleGlobalMessage(event: Event) {
       const detail = (event as CustomEvent<GroupMessageEventDetail>).detail;
       if (
@@ -87,11 +96,42 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
       ) {
         return;
       }
-      setState((current) => recordGlobalGroupMessage(current, detail));
+      const userId = currentUserId;
+      if (!userId) {
+        pendingEvents.push(detail);
+        return;
+      }
+      setState((current) => recordGlobalGroupMessage(current, detail, userId));
     }
 
     window.addEventListener(GROUP_MESSAGE_EVENT, handleGlobalMessage);
-    return () => window.removeEventListener(GROUP_MESSAGE_EVENT, handleGlobalMessage);
+
+    async function subscribeToGlobalMessages() {
+      try {
+        const user = await apiFetch<User>("/api/v1/auth/me");
+        if (cancelled) return;
+        currentUserId = user.id;
+        const queuedEvents = pendingEvents.splice(0);
+        if (queuedEvents.length > 0) {
+          setState((current) =>
+            queuedEvents.reduce(
+              (next, detail) => recordGlobalGroupMessage(next, detail, user.id),
+              current,
+            ),
+          );
+        }
+      } catch {
+        // The groups refresh remains the source of truth when identity lookup
+        // is unavailable, so do not process global events without an identity.
+      }
+    }
+
+    void subscribeToGlobalMessages();
+    return () => {
+      cancelled = true;
+      window.removeEventListener(GROUP_MESSAGE_EVENT, handleGlobalMessage);
+      pendingEvents.length = 0;
+    };
   }, []);
 
   const addGroup = useCallback((group: Group) => {
