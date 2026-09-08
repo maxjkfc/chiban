@@ -357,7 +357,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
           // Marking only page.messages.at(-1) leaves a message received during
           // this request unread when the reader is already in the room.
           const newestMessageId = latestMessageId(merged);
-          if (newestMessageId) {
+          if (newestMessageId && canMarkRead()) {
             void markGroupRead(groupId, newestMessageId);
           }
           return;
@@ -505,11 +505,21 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
               return next;
             });
             if (!alreadyHeld && !isOwnMessage) {
-              // Reflect it locally first. If mark-read fails, the badge remains
-              // visible instead of falsely claiming the message was consumed.
-              noteGroupMessage(groupId);
-              if (following.current) {
-                void markGroupRead(groupId, event.message.id);
+              if (following.current && canMarkRead()) {
+                // Start the read request before changing local unread state. This
+                // keeps the request's revision aligned with the message it marks;
+                // if the request fails, restore the badge only when no newer
+                // message has arrived in the meantime.
+                void markGroupRead(groupId, event.message.id).then((marked) => {
+                  if (
+                    !marked &&
+                    held.current.at(-1)?.id === event.message.id
+                  ) {
+                    noteGroupMessage(groupId);
+                  }
+                });
+              } else {
+                noteGroupMessage(groupId);
               }
             }
             break;
@@ -552,6 +562,13 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     };
   }, [groupId, loadLatest, markGroupRead, noteGroupMessage]);
 
+  function canMarkRead() {
+    return (
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    );
+  }
+
   // One helper writes the scroll offset, so every scroll event can be asked
   // whether it came from the reader or from this component.
   const scrollToOffset = useCallback((el: HTMLDivElement, top: number) => {
@@ -559,6 +576,31 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     lastWritten.current = el.scrollTop;
     lastScrollTop.current = el.scrollTop;
   }, []);
+
+  const markNewestRead = useCallback(() => {
+    if (!following.current || !canMarkRead()) return;
+    const newestMessageId = held.current.at(-1)?.id;
+    if (newestMessageId) {
+      void markGroupRead(groupId, newestMessageId);
+    }
+  }, [groupId, markGroupRead]);
+
+  useEffect(() => {
+    function handleReadable() {
+      if (!following.current || !canMarkRead()) return;
+      const el = scroller.current;
+      if (el) scrollToOffset(el, el.scrollHeight);
+      setSeen(held.current.at(-1)?.id);
+      markNewestRead();
+    }
+
+    window.addEventListener("focus", handleReadable);
+    document.addEventListener("visibilitychange", handleReadable);
+    return () => {
+      window.removeEventListener("focus", handleReadable);
+      document.removeEventListener("visibilitychange", handleReadable);
+    };
+  }, [markNewestRead, scrollToOffset]);
 
   // Puts the element the reader was looking at back where it was. This is what
   // absorbs a prepended page and, afterwards, each picture in it finishing its
@@ -603,11 +645,14 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         asked = true;
       }
     }
-    if (!el || !(following.current || asked)) return;
+    if (!el || !(following.current || asked) || !canMarkRead()) return;
     scrollToOffset(el, el.scrollHeight);
     following.current = true;
     viewAnchor.current = null;
     setSeen(newest);
+    if (newest) {
+      void markGroupRead(groupId, newest);
+    }
     // messages is read for the scan above; the effect is meant to run once per
     // arriving commit, which `newest` already identifies, not once per
     // reference change to a list whose contents (reactions, edits) can change
@@ -1092,7 +1137,12 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     // Cheap rather than free: React compares the value eagerly and skips the
     // render, but only while this hook has no update already queued. The id
     // guard keeps the call out of the queue during a flick through history.
-    if (atBottom && seen !== newest) setSeen(newest);
+    if (atBottom) {
+      if (seen !== newest) setSeen(newest);
+      if (canMarkRead() && newest) {
+        void markGroupRead(groupId, newest);
+      }
+    }
   }
 
   // The pill's job: put the reader back on the newest message.
@@ -1102,6 +1152,9 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
     following.current = true;
     viewAnchor.current = null;
     setSeen(newest);
+    if (canMarkRead() && newest) {
+      void markGroupRead(groupId, newest);
+    }
   }
 
   return (

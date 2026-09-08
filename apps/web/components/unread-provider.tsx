@@ -9,8 +9,12 @@ import {
   applyUnreadRefresh,
   applyUnreadRefreshFailure,
   createUnreadState,
+  GROUP_MESSAGE_EVENT,
+  recordGlobalGroupMessage,
   recordGroupMessage,
+  unreadGroupRevision,
   unreadRefreshRevision,
+  type GroupMessageEventDetail,
   type UnreadState,
 } from "@/lib/unread";
 
@@ -21,7 +25,7 @@ export type UnreadContextValue = {
   addGroup: (group: Group) => void;
   /** Reflect a realtime message before a best-effort mark-read request. */
   noteGroupMessage: (groupId: string, isOwnMessage?: boolean) => void;
-  markGroupRead: (groupId: string, messageId: string) => Promise<void>;
+  markGroupRead: (groupId: string, messageId: string) => Promise<boolean>;
 };
 
 const UnreadContext = createContext<UnreadContextValue | null>(null);
@@ -30,7 +34,10 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<UnreadState>(createUnreadState);
   const stateRef = useRef(state);
   const refreshRequestId = useRef(0);
-  const readRequestId = useRef(0);
+  // Read requests for different groups must not cancel one another. A user
+  // can open group A, then group B before A's response arrives; ignoring A's
+  // response would leave its badge stale even though the server cursor moved.
+  const readRequestIds = useRef<Record<string, number>>({});
 
   useEffect(() => {
     stateRef.current = state;
@@ -69,6 +76,24 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
     return () => controller.abort();
   }, [refreshGroups]);
 
+  useEffect(() => {
+    function handleGlobalMessage(event: Event) {
+      const detail = (event as CustomEvent<GroupMessageEventDetail>).detail;
+      if (
+        !detail ||
+        typeof detail.groupId !== "string" ||
+        typeof detail.messageId !== "string" ||
+        typeof detail.userId !== "string"
+      ) {
+        return;
+      }
+      setState((current) => recordGlobalGroupMessage(current, detail));
+    }
+
+    window.addEventListener(GROUP_MESSAGE_EVENT, handleGlobalMessage);
+    return () => window.removeEventListener(GROUP_MESSAGE_EVENT, handleGlobalMessage);
+  }, []);
+
   const addGroup = useCallback((group: Group) => {
     setState((current) => addGroupToUnreadState(current, group));
   }, []);
@@ -83,13 +108,14 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
   );
 
   const markGroupRead = useCallback(async (groupId: string, messageId: string) => {
-    const requestId = ++readRequestId.current;
-    const requestRevision = stateRef.current.revision;
+    const requestId = (readRequestIds.current[groupId] ?? 0) + 1;
+    readRequestIds.current[groupId] = requestId;
+    const requestRevision = unreadGroupRevision(stateRef.current, groupId);
     try {
       const updated = await markGroupReadRequest(groupId, messageId);
       // A newer message/read request has a newer cursor and must win even if
       // this response happens to return last.
-      if (requestId !== readRequestId.current) return;
+      if (requestId !== readRequestIds.current[groupId]) return true;
       setState((current) =>
         applyGroupReadResultIfCurrentRevision(
           current,
@@ -97,9 +123,11 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
           requestRevision,
         ),
       );
+      return true;
     } catch {
       // Read markers are best effort. The local realtime update remains visible
       // so a failed request cannot silently hide a new unread message.
+      return false;
     }
   }, []);
 

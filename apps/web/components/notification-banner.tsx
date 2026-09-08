@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getOrCreateDeviceId } from "@/lib/device";
+import { GROUP_MESSAGE_EVENT, type GroupMessageEventDetail } from "@/lib/unread";
 
 interface InAppNotification {
   id: string;
@@ -57,6 +58,17 @@ export function NotificationBanner() {
           const data = JSON.parse(event.data);
           if (data.type === "message" && data.message) {
             const msg = data.message;
+            if (msg.group_id !== currentGroupId) {
+              window.dispatchEvent(
+                new CustomEvent<GroupMessageEventDetail>(GROUP_MESSAGE_EVENT, {
+                  detail: {
+                    groupId: msg.group_id,
+                    messageId: msg.id,
+                    userId: msg.user_id,
+                  },
+                }),
+              );
+            }
             // Ignore if event belongs to current actively open group
             if (msg.group_id === currentGroupId) {
               return;
@@ -82,10 +94,11 @@ export function NotificationBanner() {
 
       ws.onclose = () => {
         if (!isClosed) {
-          setTimeout(connect, 3000);
+          setTimeout(() => connect(), 3000);
         }
       };
     }
+    void connect();
     return () => {
       isClosed = true;
       clearInterval(heartbeatInterval!);

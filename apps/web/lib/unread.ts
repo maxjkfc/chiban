@@ -1,5 +1,13 @@
 import type { Group } from "./api";
 
+export const GROUP_MESSAGE_EVENT = "chiban:group-message";
+
+export type GroupMessageEventDetail = {
+  groupId: string;
+  messageId: string;
+  userId: string;
+};
+
 export type UnreadGroup = {
   has_unread?: boolean;
   unread_count?: number;
@@ -10,6 +18,8 @@ export type UnreadState = {
   error: boolean;
   /** Local mutations invalidate refreshes that started before them. */
   revision: number;
+  /** Read/message mutations are compared independently for each group. */
+  groupRevisions: Record<string, number>;
   /** Updates received while a groups refresh is in flight. */
   overrides: Record<string, { group: Group; revision: number }>;
   /** Realtime messages received before the first groups response populates state. */
@@ -33,6 +43,7 @@ export function createUnreadState(): UnreadState {
     groups: null,
     error: false,
     revision: 0,
+    groupRevisions: {},
     overrides: {},
     pendingUnread: {},
   };
@@ -100,6 +111,7 @@ export function applyUnreadRefresh(
     groups: nextGroups,
     error: false,
     revision: state.revision,
+    groupRevisions: state.groupRevisions,
     overrides: stale ? nextOverrides : {},
     pendingUnread: nextPendingUnread,
   };
@@ -127,12 +139,17 @@ export function applyGroupReadResult(
     group.id === updated.id ? updated : group,
   ) ?? state.groups;
   const revision = state.revision + 1;
+  const groupRevision = (state.groupRevisions[updated.id] ?? 0) + 1;
   const pendingUnread = { ...state.pendingUnread };
   delete pendingUnread[updated.id];
   return {
     groups,
     error: false,
     revision,
+    groupRevisions: {
+      ...state.groupRevisions,
+      [updated.id]: groupRevision,
+    },
     overrides: {
       ...state.overrides,
       [updated.id]: { group: updated, revision },
@@ -147,9 +164,17 @@ export function applyGroupReadResultIfCurrentRevision(
   updated: Group,
   requestRevision: number,
 ): UnreadState {
-  return state.revision === requestRevision
+  return (state.groupRevisions[updated.id] ?? 0) === requestRevision
     ? applyGroupReadResult(state, updated)
     : state;
+}
+
+/** Captures the version a group read request must still match to be applied. */
+export function unreadGroupRevision(
+  state: UnreadState,
+  groupId: string,
+): number {
+  return state.groupRevisions[groupId] ?? 0;
 }
 
 /** Records a realtime message locally before the read request resolves. */
@@ -169,6 +194,10 @@ export function recordGroupMessage(
     return {
       ...state,
       revision: state.revision + 1,
+      groupRevisions: {
+        ...state.groupRevisions,
+        [groupId]: (state.groupRevisions[groupId] ?? 0) + 1,
+      },
       pendingUnread: {
         ...state.pendingUnread,
         [groupId]: pendingCount,
@@ -182,18 +211,32 @@ export function recordGroupMessage(
     has_unread: true,
   };
   const revision = state.revision + 1;
+  const groupRevision = (state.groupRevisions[groupId] ?? 0) + 1;
   return {
     ...state,
     groups: state.groups?.map((candidate) =>
       candidate.id === groupId ? updated : candidate,
     ) ?? state.groups,
     revision,
+    groupRevisions: {
+      ...state.groupRevisions,
+      [groupId]: groupRevision,
+    },
     overrides: {
       ...state.overrides,
       [groupId]: { group: updated, revision },
     },
     pendingUnread: state.pendingUnread,
   };
+}
+
+/** Applies a message received from the app-wide authenticated websocket. */
+export function recordGlobalGroupMessage(
+  state: UnreadState,
+  event: GroupMessageEventDetail,
+  isOwnMessage = false,
+): UnreadState {
+  return recordGroupMessage(state, event.groupId, isOwnMessage);
 }
 
 /** Adds a newly-created group without allowing a stale GET to remove it. */
@@ -206,6 +249,10 @@ export function addGroupToUnreadState(
     ...state,
     groups: [...(state.groups ?? []), group],
     revision,
+    groupRevisions: {
+      ...state.groupRevisions,
+      [group.id]: (state.groupRevisions[group.id] ?? 0) + 1,
+    },
     overrides: {
       ...state.overrides,
       [group.id]: { group, revision },

@@ -12,6 +12,8 @@ import {
   groupHasUnread,
   latestMessageId,
   recordGroupMessage,
+  recordGlobalGroupMessage,
+  unreadGroupRevision,
   unreadRefreshRevision,
 } from "../lib/unread.ts";
 
@@ -139,6 +141,98 @@ test("a realtime message sets unread and a sender's own message does not", () =>
   assert.strictEqual(own, incoming);
 });
 
+test("a global websocket message updates a group outside the open room", () => {
+  const loaded = applyUnreadRefresh(
+    createUnreadState(),
+    [
+      group({ id: "group-1", unread_count: 0, has_unread: false }),
+      group({ id: "group-2", name: "Lunch", unread_count: 0, has_unread: false }),
+    ],
+    0,
+    1,
+    1,
+  );
+
+  const updated = recordGlobalGroupMessage(loaded, {
+    groupId: "group-2",
+    messageId: "message-2",
+    userId: "member-2",
+  });
+
+  assert.equal(
+    updated.groups?.find((item) => item.id === "group-1")?.has_unread,
+    false,
+  );
+  assert.equal(
+    updated.groups?.find((item) => item.id === "group-2")?.has_unread,
+    true,
+  );
+  assert.equal(
+    updated.groups?.find((item) => item.id === "group-2")?.unread_count,
+    1,
+  );
+});
+
+test("a message in another group does not invalidate a pending read", () => {
+  const loaded = applyUnreadRefresh(
+    createUnreadState(),
+    [
+      group({ id: "group-1", unread_count: 2, has_unread: true }),
+      group({ id: "group-2", name: "Lunch", unread_count: 0, has_unread: false }),
+    ],
+    0,
+    1,
+    1,
+  );
+  const requestRevision = unreadGroupRevision(loaded, "group-1");
+  const withOtherGroupMessage = recordGroupMessage(loaded, "group-2");
+  const resolved = applyGroupReadResultIfCurrentRevision(
+    withOtherGroupMessage,
+    group({ id: "group-1", unread_count: 0, has_unread: false }),
+    requestRevision,
+  );
+
+  assert.equal(resolved.groups?.find((item) => item.id === "group-1")?.has_unread, false);
+  assert.equal(resolved.groups?.find((item) => item.id === "group-2")?.has_unread, true);
+});
+
+test("a stale refresh cannot resurrect a read cursor after another group changes", () => {
+  const loaded = applyUnreadRefresh(
+    createUnreadState(),
+    [
+      group({ id: "group-1", unread_count: 1, has_unread: true }),
+      group({ id: "group-2", name: "Lunch", unread_count: 0, has_unread: false }),
+    ],
+    0,
+    1,
+    1,
+  );
+  const refreshRevision = unreadRefreshRevision(loaded);
+  const read = applyGroupReadResult(
+    loaded,
+    group({ id: "group-1", unread_count: 0, has_unread: false }),
+  );
+  const withOtherGroupMessage = recordGlobalGroupMessage(read, {
+    groupId: "group-2",
+    messageId: "message-2",
+    userId: "member-2",
+  });
+
+  const resolved = applyUnreadRefresh(
+    withOtherGroupMessage,
+    [
+      group({ id: "group-1", unread_count: 1, has_unread: true }),
+      group({ id: "group-2", name: "Lunch", unread_count: 0, has_unread: false }),
+    ],
+    refreshRevision,
+    2,
+    2,
+  );
+
+  assert.equal(resolved.groups?.find((item) => item.id === "group-1")?.has_unread, false);
+  assert.equal(resolved.groups?.find((item) => item.id === "group-2")?.has_unread, true);
+});
+
 test("a realtime message before the initial refresh remains unread", () => {
   const initial = createUnreadState();
   const duringRefresh = recordGroupMessage(initial, "group-1");
@@ -166,6 +260,26 @@ test("mark-read clears a pending realtime message before refresh completion", ()
   assert.equal(resolved.groups?.[0].has_unread, false);
   assert.equal(resolved.groups?.[0].unread_count, 0);
   assert.deepEqual(resolved.pendingUnread, {});
+});
+
+test("a mark-read request started after its realtime message can clear that message", () => {
+  const loaded = applyUnreadRefresh(
+    createUnreadState(),
+    [group({ unread_count: 0, has_unread: false })],
+    0,
+    1,
+    1,
+  );
+  const afterMessage = recordGroupMessage(loaded, "group-1");
+  const requestRevision = unreadGroupRevision(afterMessage, "group-1");
+  const resolved = applyGroupReadResultIfCurrentRevision(
+    afterMessage,
+    group({ unread_count: 0, has_unread: false }),
+    requestRevision,
+  );
+
+  assert.equal(resolved.groups?.[0].has_unread, false);
+  assert.equal(resolved.groups?.[0].unread_count, 0);
 });
 
 test("refresh failure keeps the existing groups as a graceful fallback", () => {
