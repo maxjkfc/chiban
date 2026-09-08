@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 import { markGroupRead, type Group } from "../lib/api.ts";
 import {
@@ -9,12 +14,14 @@ import {
   applyUnreadRefresh,
   applyUnreadRefreshFailure,
   createUnreadState,
+  GROUP_MESSAGE_EVENT,
   groupHasUnread,
   latestMessageId,
   recordGroupMessage,
   recordGlobalGroupMessage,
   unreadGroupRevision,
   unreadRefreshRevision,
+  type GroupMessageEventDetail,
 } from "../lib/unread.ts";
 
 function group(overrides: Partial<Group> = {}): Group {
@@ -27,6 +34,171 @@ function group(overrides: Partial<Group> = {}): Group {
     has_unread: true,
     ...overrides,
   };
+}
+
+type UnreadContextValue = {
+  groups: Group[] | null;
+};
+
+type HookSlot = {
+  value: unknown;
+  deps?: readonly unknown[];
+  cleanup?: (() => void) | undefined;
+};
+
+/**
+ * Mounts the real provider with a tiny hook runner so this node:test suite can
+ * exercise browser effects without adding a second DOM/test-renderer stack.
+ */
+function mountUnreadProviderForTest() {
+  const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const providerPath = resolve(appRoot, "components/unread-provider.tsx");
+  const nodeRequire = createRequire(import.meta.url);
+  const nodeModule = nodeRequire("node:module") as {
+    _load: (...args: [string, object | null, boolean]) => unknown;
+    _resolveFilename: (...args: [string, object | null, boolean]) => string;
+  };
+  const originalLoad = nodeModule._load;
+  const originalResolve = nodeModule._resolveFilename;
+  const originalTsxLoader = nodeRequire.extensions[".tsx"];
+  const slots: HookSlot[] = [];
+  let hookIndex = 0;
+  let mounted = false;
+
+  function dependenciesChanged(previous: readonly unknown[] | undefined, next: readonly unknown[]) {
+    return previous === undefined || previous.length !== next.length ||
+      next.some((dependency, index) => !Object.is(dependency, previous[index]));
+  }
+
+  const fakeReact = {
+    createContext(defaultValue: unknown) {
+      return { current: defaultValue, Provider: Symbol("provider") };
+    },
+    useCallback<T extends (...args: never[]) => unknown>(callback: T, deps: readonly unknown[]) {
+      const slot = slots[hookIndex] ?? { value: callback };
+      if (!mounted || dependenciesChanged(slot.deps, deps)) {
+        slot.value = callback;
+        slot.deps = deps;
+      }
+      slots[hookIndex++] = slot;
+      return slot.value as T;
+    },
+    useContext<T>(context: { current: T }) {
+      return context.current;
+    },
+    useEffect(effect: () => (() => void) | void, deps: readonly unknown[]) {
+      const slot = slots[hookIndex] ?? { value: undefined };
+      if (!mounted || dependenciesChanged(slot.deps, deps)) {
+        slot.cleanup?.();
+        slot.cleanup = effect() ?? undefined;
+        slot.deps = deps;
+      }
+      slots[hookIndex++] = slot;
+    },
+    useMemo<T>(factory: () => T, deps: readonly unknown[]) {
+      const slot = slots[hookIndex] ?? { value: undefined };
+      if (!mounted || dependenciesChanged(slot.deps, deps)) {
+        slot.value = factory();
+        slot.deps = deps;
+      }
+      slots[hookIndex++] = slot;
+      return slot.value as T;
+    },
+    useRef<T>(value: T) {
+      const slot = slots[hookIndex] ?? { value: { current: value } };
+      slots[hookIndex++] = slot;
+      return slot.value as { current: T };
+    },
+    useState<T>(initial: T | (() => T)) {
+      const slot = slots[hookIndex] ?? {
+        value: typeof initial === "function" ? (initial as () => T)() : initial,
+      };
+      const slotIndex = hookIndex++;
+      slots[slotIndex] = slot;
+      return [
+        slot.value as T,
+        (update: T | ((current: T) => T)) => {
+          slot.value = typeof update === "function"
+            ? (update as (current: T) => T)(slot.value as T)
+            : update;
+        },
+      ] as const;
+    },
+  };
+
+  nodeModule._resolveFilename = (...args) => {
+    const [request, parent] = args;
+    const parentFilename = (parent as { filename?: string } | null)?.filename;
+    const basePath = request.startsWith("@/")
+      ? resolve(appRoot, request.slice(2))
+      : parentFilename && request.startsWith(".")
+        ? resolve(dirname(parentFilename), request)
+        : undefined;
+    if (basePath) {
+      for (const extension of [".ts", ".tsx"]) {
+        try {
+          readFileSync(`${basePath}${extension}`);
+          return `${basePath}${extension}`;
+        } catch {
+          // Try the next TypeScript extension.
+        }
+      }
+    }
+    return originalResolve(...args);
+  };
+  nodeRequire.extensions[".tsx"] = (module, filename) => {
+    const source = readFileSync(filename, "utf8");
+    const output = ts.transpileModule(source, {
+      compilerOptions: {
+        esModuleInterop: true,
+        jsx: ts.JsxEmit.ReactJSX,
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+      },
+      fileName: filename,
+    }).outputText;
+    (module as typeof module & { _compile: (code: string, filename: string) => void })
+      ._compile(output, filename);
+  };
+  nodeModule._load = (...args) => {
+    const [request] = args;
+    if (request === "react") return fakeReact;
+    if (request === "react/jsx-runtime") {
+      return { jsx: (type: unknown, props: unknown) => ({ type, props }) };
+    }
+    return originalLoad(...args);
+  };
+
+  let provider: (props: { children: null }) => { props: { value: UnreadContextValue } };
+  try {
+    const loaded = nodeRequire(providerPath) as { UnreadProvider: typeof provider };
+    provider = loaded.UnreadProvider;
+  } finally {
+    nodeModule._load = originalLoad;
+    nodeModule._resolveFilename = originalResolve;
+    if (originalTsxLoader) nodeRequire.extensions[".tsx"] = originalTsxLoader;
+    else delete nodeRequire.extensions[".tsx"];
+  }
+
+  function render() {
+    hookIndex = 0;
+    const output = provider({ children: null });
+    mounted = true;
+    return output.props.value;
+  }
+
+  function unmount() {
+    for (const slot of slots) slot.cleanup?.();
+  }
+
+  return { render, unmount };
+}
+
+function dispatchGroupMessage(detail: GroupMessageEventDetail) {
+  const event = new CustomEvent<GroupMessageEventDetail>(GROUP_MESSAGE_EVENT, {
+    detail,
+  });
+  window.dispatchEvent(event);
 }
 
 test("groupHasUnread treats either unread API signal as unread", () => {
@@ -203,6 +375,92 @@ test("the global websocket path ignores a message from the authenticated user", 
   assert.strictEqual(ownMessage, loaded);
   assert.equal(incomingMessage.groups?.[0].has_unread, true);
   assert.equal(incomingMessage.groups?.[0].unread_count, 1);
+});
+
+test("UnreadProvider filters own global messages before and after auth resolves", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const listeners = new Map<string, Set<(event: Event) => void>>();
+  const windowMock = {
+    addEventListener(type: string, listener: (event: Event) => void) {
+      const typeListeners = listeners.get(type) ?? new Set();
+      typeListeners.add(listener);
+      listeners.set(type, typeListeners);
+    },
+    removeEventListener(type: string, listener: (event: Event) => void) {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatchEvent(event: Event) {
+      listeners.get(event.type)?.forEach((listener) => listener(event));
+      return true;
+    },
+  } as unknown as Window & typeof globalThis;
+  globalThis.window = windowMock;
+
+  let resolveAuth: ((response: Response) => void) | undefined;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/groups")) {
+      return new Response(
+        JSON.stringify([group({ unread_count: 0, has_unread: false })]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    if (url.endsWith("/api/v1/auth/me")) {
+      return new Promise<Response>((resolve) => {
+        resolveAuth = resolve;
+      });
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  const provider = mountUnreadProviderForTest();
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  try {
+    provider.render();
+    await flush();
+    provider.render();
+    assert.ok(resolveAuth);
+
+    dispatchGroupMessage({
+      groupId: "group-1",
+      messageId: "own-before-auth",
+      userId: "current-user",
+    });
+    assert.equal(provider.render().groups?.[0].unread_count, 0);
+    assert.equal(provider.render().groups?.[0].has_unread, false);
+
+    resolveAuth!(
+      new Response(JSON.stringify({ id: "current-user", email: "me@example.com" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await flush();
+    assert.equal(provider.render().groups?.[0].unread_count, 0);
+    assert.equal(provider.render().groups?.[0].has_unread, false);
+
+    dispatchGroupMessage({
+      groupId: "group-1",
+      messageId: "own-after-auth",
+      userId: "current-user",
+    });
+    assert.equal(provider.render().groups?.[0].unread_count, 0);
+    assert.equal(provider.render().groups?.[0].has_unread, false);
+
+    dispatchGroupMessage({
+      groupId: "group-1",
+      messageId: "incoming-after-auth",
+      userId: "member-2",
+    });
+    assert.equal(provider.render().groups?.[0].unread_count, 1);
+    assert.equal(provider.render().groups?.[0].has_unread, true);
+  } finally {
+    provider.unmount();
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
 });
 
 test("a message in another group does not invalidate a pending read", () => {
