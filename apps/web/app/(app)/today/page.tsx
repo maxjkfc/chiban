@@ -15,7 +15,9 @@ import {
   shiftDate,
   type Meal,
   type MealDay,
+  type Profile,
 } from "@/lib/api";
+import { isTodayDate } from "@/lib/date.mts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,6 +33,7 @@ export default function TodayPage() {
   const [day, setDay] = useState<MealDay | null>(null);
   // null means "whatever today is for me"; the backend answers with the date.
   const [date, setDate] = useState<string | null>(null);
+  const [timezone, setTimezone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback((requested: string | null, signal?: AbortSignal) => {
@@ -53,8 +56,20 @@ export default function TodayPage() {
     return () => controller.abort();
   }, [date, load]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    apiFetch<Profile>("/api/v1/me/profile", {
+      signal: controller.signal,
+    })
+      .then((profile) => setTimezone(profile.timezone))
+      .catch(() => {
+        if (!controller.signal.aborted) setError("讀取失敗，請重新整理");
+      });
+    return () => controller.abort();
+  }, []);
+
   const shown = day?.date ?? null;
-  const isToday = date === null;
+  const isToday = timezone === null ? date === null : isTodayDate(date, timezone);
 
   // Newest first. The backend answers in the order the meals were eaten, which
   // is the right order for a diary but puts the meal most likely to have been
