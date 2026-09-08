@@ -12,6 +12,8 @@ export type UnreadState = {
   revision: number;
   /** Updates received while a groups refresh is in flight. */
   overrides: Record<string, { group: Group; revision: number }>;
+  /** Realtime messages received before the first groups response populates state. */
+  pendingUnread: Record<string, number>;
 };
 
 /** Returns whether a group should show an unread indicator. */
@@ -27,7 +29,13 @@ export function latestMessageId(
 }
 
 export function createUnreadState(): UnreadState {
-  return { groups: null, error: false, revision: 0, overrides: {} };
+  return {
+    groups: null,
+    error: false,
+    revision: 0,
+    overrides: {},
+    pendingUnread: {},
+  };
 }
 
 /** Capture the version a GET /groups request must still match to be applied. */
@@ -57,6 +65,7 @@ export function applyUnreadRefresh(
   const nextGroups = [...loaded];
   const seen = new Set(nextGroups.map((group) => group.id));
   const nextOverrides: UnreadState["overrides"] = {};
+  const nextPendingUnread = { ...state.pendingUnread };
 
   for (const [groupId, override] of Object.entries(state.overrides)) {
     if (override.revision <= requestRevision) continue;
@@ -72,11 +81,27 @@ export function applyUnreadRefresh(
     }
   }
 
+  for (const [groupId, pendingCount] of Object.entries(state.pendingUnread)) {
+    const index = nextGroups.findIndex((group) => group.id === groupId);
+    if (index < 0 || pendingCount <= 0) continue;
+
+    const current = nextGroups[index];
+    const updated: Group = {
+      ...current,
+      unread_count: (current.unread_count ?? (current.has_unread ? 1 : 0)) + pendingCount,
+      has_unread: true,
+    };
+    nextGroups[index] = updated;
+    nextOverrides[groupId] = { group: updated, revision: state.revision };
+    delete nextPendingUnread[groupId];
+  }
+
   return {
     groups: nextGroups,
     error: false,
     revision: state.revision,
     overrides: stale ? nextOverrides : {},
+    pendingUnread: nextPendingUnread,
   };
 }
 
@@ -102,6 +127,8 @@ export function applyGroupReadResult(
     group.id === updated.id ? updated : group,
   ) ?? state.groups;
   const revision = state.revision + 1;
+  const pendingUnread = { ...state.pendingUnread };
+  delete pendingUnread[updated.id];
   return {
     groups,
     error: false,
@@ -110,6 +137,7 @@ export function applyGroupReadResult(
       ...state.overrides,
       [updated.id]: { group: updated, revision },
     },
+    pendingUnread,
   };
 }
 
@@ -135,7 +163,18 @@ export function recordGroupMessage(
   const group =
     state.overrides[groupId]?.group ??
     state.groups?.find((candidate) => candidate.id === groupId);
-  if (!group) return state;
+  if (!group) {
+    if (state.groups !== null) return state;
+    const pendingCount = (state.pendingUnread[groupId] ?? 0) + 1;
+    return {
+      ...state,
+      revision: state.revision + 1,
+      pendingUnread: {
+        ...state.pendingUnread,
+        [groupId]: pendingCount,
+      },
+    };
+  }
 
   const updated: Group = {
     ...group,
@@ -153,6 +192,7 @@ export function recordGroupMessage(
       ...state.overrides,
       [groupId]: { group: updated, revision },
     },
+    pendingUnread: state.pendingUnread,
   };
 }
 
@@ -170,5 +210,6 @@ export function addGroupToUnreadState(
       ...state.overrides,
       [group.id]: { group, revision },
     },
+    pendingUnread: state.pendingUnread,
   };
 }

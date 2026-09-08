@@ -139,6 +139,35 @@ test("a realtime message sets unread and a sender's own message does not", () =>
   assert.strictEqual(own, incoming);
 });
 
+test("a realtime message before the initial refresh remains unread", () => {
+  const initial = createUnreadState();
+  const duringRefresh = recordGroupMessage(initial, "group-1");
+  const resolved = applyUnreadRefresh(
+    duringRefresh,
+    [group({ unread_count: 0, has_unread: false })],
+    0,
+    1,
+    1,
+  );
+
+  assert.equal(resolved.groups?.[0].has_unread, true);
+  assert.equal(resolved.groups?.[0].unread_count, 1);
+  assert.deepEqual(resolved.pendingUnread, {});
+});
+
+test("mark-read clears a pending realtime message before refresh completion", () => {
+  const duringRefresh = recordGroupMessage(createUnreadState(), "group-1");
+  const markedRead = applyGroupReadResult(
+    duringRefresh,
+    group({ unread_count: 0, has_unread: false }),
+  );
+  const resolved = applyUnreadRefresh(markedRead, [group()], 0, 1, 1);
+
+  assert.equal(resolved.groups?.[0].has_unread, false);
+  assert.equal(resolved.groups?.[0].unread_count, 0);
+  assert.deepEqual(resolved.pendingUnread, {});
+});
+
 test("refresh failure keeps the existing groups as a graceful fallback", () => {
   const loaded = applyUnreadRefresh(
     createUnreadState(),
