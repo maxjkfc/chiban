@@ -280,10 +280,12 @@ func (a *App) SaveProfile(displayName, timezone string) Profile {
 
 // Group is the group shape the API returns.
 type Group struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	IsOwner bool   `json:"is_owner"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+	IsOwner     bool   `json:"is_owner"`
+	UnreadCount int    `json:"unread_count"`
+	HasUnread   bool   `json:"has_unread"`
 }
 
 // Invite is the invite shape the API returns.
@@ -310,6 +312,58 @@ func (a *App) CreateGroup(name string) Group {
 	resp := a.Request(http.MethodPost, "/api/v1/groups", map[string]string{"name": name})
 	if resp.StatusCode != http.StatusCreated {
 		a.t.Fatalf("create group: status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	var g Group
+	a.DecodeJSON(resp, &g)
+	return g
+}
+
+// ListGroups returns the current user's groups with unread state.
+func (a *App) ListGroups() []Group {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/groups", nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("list groups: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var groups []Group
+	a.DecodeJSON(resp, &groups)
+	return groups
+}
+
+// GetGroup reads a single group as the current user.
+func (a *App) GetGroup(groupID string) Group {
+	a.t.Helper()
+
+	resp := a.Request(http.MethodGet, "/api/v1/groups/"+groupID, nil)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("get group: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var g Group
+	a.DecodeJSON(resp, &g)
+	return g
+}
+
+// MarkGroupRead marks a group read up to a message, returning the raw
+// response so tests can assert on rejections as well as successes.
+func (a *App) MarkGroupRead(groupID, messageID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/read",
+		map[string]string{"message_id": messageID})
+}
+
+// ReadGroup marks a group read up to a message and fails the test unless it
+// was accepted, returning the group the API answers with.
+func (a *App) ReadGroup(groupID, messageID string) Group {
+	a.t.Helper()
+
+	resp := a.MarkGroupRead(groupID, messageID)
+	if resp.StatusCode != http.StatusOK {
+		a.t.Fatalf("mark group read: status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
 	var g Group

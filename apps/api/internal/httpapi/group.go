@@ -23,6 +23,13 @@ type groupResponse struct {
 	Name    string `json:"name"`
 	Role    string `json:"role"`
 	IsOwner bool   `json:"is_owner"`
+	// UnreadCount is how many messages (tombstones included) the caller has
+	// not yet marked read in this group. Zero for a fully-read group and for
+	// endpoints that do not compute it (Create, Get, Join).
+	UnreadCount int `json:"unread_count"`
+	// HasUnread mirrors UnreadCount as a boolean, since the nav badge only
+	// needs "is there anything new", not how much.
+	HasUnread bool `json:"has_unread"`
 }
 
 type memberResponse struct {
@@ -40,10 +47,12 @@ type inviteResponse struct {
 
 func newGroupResponse(g group.Group, userID uuid.UUID) groupResponse {
 	return groupResponse{
-		ID:      g.ID.String(),
-		Name:    g.Name,
-		Role:    g.Role,
-		IsOwner: g.OwnerID == userID,
+		ID:          g.ID.String(),
+		Name:        g.Name,
+		Role:        g.Role,
+		IsOwner:     g.OwnerID == userID,
+		UnreadCount: g.UnreadCount,
+		HasUnread:   g.UnreadCount > 0,
 	}
 }
 
@@ -238,6 +247,49 @@ func leaveGroupHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+type markGroupReadRequest struct {
+	// MessageID is the newest message the caller has seen. It must belong to
+	// this group, matching what the client already has in its own history.
+	MessageID string `json:"message_id"`
+}
+
+// markGroupReadHandler advances the caller's own read cursor for a group.
+//
+// Authorization is membership only: a member marks their own cursor, and the
+// service layer scopes the write to (group_id, user_id) so no request here
+// can touch another member's read state, regardless of what the body claims.
+func markGroupReadHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID, ok := pathUUID(w, r, "group_id")
+		if !ok {
+			return
+		}
+
+		var req markGroupReadRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+		messageID, err := uuid.Parse(req.MessageID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "message_id must be a UUID", "message_id")
+			return
+		}
+
+		userID := auth.UserFromContext(r.Context()).ID
+		if err := d.Group.MarkRead(r.Context(), userID, groupID, messageID); err != nil {
+			writeGroupError(w, d, err)
+			return
+		}
+
+		g, err := d.Group.Get(r.Context(), userID, groupID)
+		if err != nil {
+			writeGroupError(w, d, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, newGroupResponse(g, userID))
+	}
+}
+
 func writeGroupError(w http.ResponseWriter, d Deps, err error) {
 	var invalid group.InvalidInputError
 	switch {
@@ -253,6 +305,8 @@ func writeGroupError(w http.ResponseWriter, d Deps, err error) {
 		writeError(w, http.StatusConflict, "the owner cannot leave the group")
 	case errors.Is(err, group.ErrInviteInvalid):
 		writeError(w, http.StatusNotFound, "this invite is no longer valid")
+	case errors.Is(err, group.ErrMessageNotInGroup):
+		writeError(w, http.StatusBadRequest, "message_id is not a message in this group", "message_id")
 	default:
 		d.Logger.Error("group request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

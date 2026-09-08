@@ -75,6 +75,14 @@ func NewRouter(d Deps) http.Handler {
 		// the sticker domain says whether a sticker is the sender's to send.
 		d.Chat = chat.NewService(d.DB, d.Group, d.Hub, d.Storage, d.Sticker)
 	}
+	// Read-cursor unread counting asks chat where a message sits and how many
+	// sit after a cursor; group owns the cursor itself. Wired after both
+	// services exist, the same way push notifications are.
+	d.Group.SetChatReader(d.Chat)
+	// The reverse wiring: chat advances a sender's own cursor right after
+	// their message lands, so posting never leaves their own group looking
+	// unread to them.
+	d.Chat.SetReadCursors(d.Group)
 	if d.Meal == nil {
 		// Sharing widens who may read a meal, so meal asks the group domain
 		// which groups a reader is in, and asks chat to announce the card.
@@ -123,6 +131,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /api/v1/groups/{group_id}", d.Auth.RequireUser(getGroupHandler(d)))
 	mux.Handle("GET /api/v1/groups/{group_id}/members", d.Auth.RequireUser(listMembersHandler(d)))
 	mux.Handle("DELETE /api/v1/groups/{group_id}/members/me", d.Auth.RequireUser(leaveGroupHandler(d)))
+	mux.Handle("POST /api/v1/groups/{group_id}/read", d.Auth.RequireUser(markGroupReadHandler(d)))
 	mux.Handle("POST /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(createInviteHandler(d)))
 	mux.Handle("GET /api/v1/groups/{group_id}/invites", d.Auth.RequireUser(listInvitesHandler(d)))
 	mux.Handle("DELETE /api/v1/groups/{group_id}/invites/{invite_id}", d.Auth.RequireUser(revokeInviteHandler(d)))
