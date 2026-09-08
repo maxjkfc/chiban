@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test lib/date.test.mts"
+    "test": "node --experimental-strip-types --test lib/*.test.mts"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

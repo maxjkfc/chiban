@@ -17,7 +17,7 @@ import {
   type MealDay,
   type Profile,
 } from "@/lib/api";
-import { isTodayDate } from "@/lib/date.mts";
+import { isTodaySelection } from "@/lib/today-page-state.mts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -69,7 +69,7 @@ export default function TodayPage() {
   }, []);
 
   const shown = day?.date ?? null;
-  const isToday = timezone === null ? date === null : isTodayDate(date, timezone);
+  const isToday = isTodaySelection(date, timezone);
 
   // Newest first. The backend answers in the order the meals were eaten, which
   // is the right order for a diary but puts the meal most likely to have been
