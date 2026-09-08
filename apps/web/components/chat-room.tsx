@@ -240,7 +240,7 @@ function quoteOf(parent: {
 }
 
 export function ChatRoom({ groupId, members }: ChatRoomProps) {
-  const { markGroupRead } = useUnreadGroups();
+  const { markGroupRead, noteGroupMessage } = useUnreadGroups();
   // Held in state, not read straight from the prop: the list is fetched once
   // when the page loads, and someone invited a minute ago is not on it. Their
   // first message is exactly when their name is needed.
@@ -346,15 +346,17 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
         if (mode === "initial") {
           // Anything already held arrived on the socket while this request was
           // in flight, so it is newer than every message in this page.
-          setMessages((current) =>
-            merge(
-              reconcile(current, page.messages, settling.current),
-              page.messages,
-              "older",
-            ),
+          const merged = merge(
+            reconcile(held.current, page.messages, settling.current),
+            page.messages,
+            "older",
           );
+          setMessages(merged);
           setBefore(page.before);
-          const newestMessageId = latestMessageId(page.messages);
+          // Mark the actual newest message after merging socket deliveries too.
+          // Marking only page.messages.at(-1) leaves a message received during
+          // this request unread when the reader is already in the room.
+          const newestMessageId = latestMessageId(merged);
           if (newestMessageId) {
             void markGroupRead(groupId, newestMessageId);
           }
@@ -487,9 +489,31 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       socket.onmessage = (raw) => {
         const event = JSON.parse(raw.data as string) as SocketEvent;
         switch (event.type) {
-          case "message":
-            setMessages((current) => merge(current, [event.message], "newer"));
+          case "message": {
+            const isOwnMessage =
+              event.message.user_id === myId.current ||
+              sentHere.current.has(event.message.client_message_id);
+            const alreadyHeld = held.current.some(
+              (message) => message.id === event.message.id,
+            );
+            // Keep the ref in sync synchronously so an initial history response
+            // cannot miss a socket message delivered in the same time window.
+            held.current = merge(held.current, [event.message], "newer");
+            setMessages((current) => {
+              const next = merge(current, [event.message], "newer");
+              held.current = next;
+              return next;
+            });
+            if (!alreadyHeld && !isOwnMessage) {
+              // Reflect it locally first. If mark-read fails, the badge remains
+              // visible instead of falsely claiming the message was consumed.
+              noteGroupMessage(groupId);
+              if (following.current) {
+                void markGroupRead(groupId, event.message.id);
+              }
+            }
             break;
+          }
           case "reaction":
             setMessages((current) =>
               applyReaction(current, event.reaction, myId.current),
@@ -526,7 +550,7 @@ export function ChatRoom({ groupId, members }: ChatRoomProps) {
       clearTimeout(retry);
       socket?.close();
     };
-  }, [groupId, loadLatest]);
+  }, [groupId, loadLatest, markGroupRead, noteGroupMessage]);
 
   // One helper writes the scroll offset, so every scroll event can be asked
   // whether it came from the reader or from this component.

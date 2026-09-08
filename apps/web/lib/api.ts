@@ -25,12 +25,13 @@ export type ApiError = {
 };
 
 export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly field?: string,
-    message?: string,
-  ) {
+  readonly status: number;
+  readonly field?: string;
+
+  constructor(status: number, field?: string, message?: string) {
     super(message ?? "請求失敗");
+    this.status = status;
+    this.field = field;
   }
 }
 
