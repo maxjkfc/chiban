@@ -4,6 +4,10 @@ import { CameraIcon, SunIcon, UserIcon, UsersIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { UnreadBadge } from "@/components/unread-badge";
+import { useUnreadGroups } from "@/components/unread-provider";
+import { groupHasUnread } from "@/lib/unread";
+
 const items = [
   { href: "/today", label: "今日", icon: SunIcon },
   { href: "/record", label: "記錄", icon: CameraIcon },
@@ -21,6 +25,8 @@ const items = [
  */
 export function BottomNav() {
   const pathname = usePathname();
+  const { groups } = useUnreadGroups();
+  const hasUnreadGroup = groups?.some(groupHasUnread) ?? false;
 
   // A conversation takes the whole screen. Leaving the nav here stacked three
   // bars at the bottom — quick rail, composer, nav — and pushed the newest
@@ -45,7 +51,14 @@ export function BottomNav() {
                   active ? "text-primary-ink font-bold" : "text-muted-foreground"
                 }`}
               >
-                <Icon className={active ? "size-6" : "size-5"} aria-hidden />
+                <span className="relative">
+                  <Icon className={active ? "size-6" : "size-5"} aria-hidden />
+                  {item.href === "/groups" && hasUnreadGroup ? (
+                    <span className="absolute -top-1 -right-2">
+                      <UnreadBadge count={1} />
+                    </span>
+                  ) : null}
+                </span>
                 {item.label}
                 {/* Colour is never the only cue: the icon grows, the label
                     bolds, and this rule appears. */}

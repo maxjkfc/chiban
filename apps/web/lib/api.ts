@@ -25,12 +25,13 @@ export type ApiError = {
 };
 
 export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly field?: string,
-    message?: string,
-  ) {
+  readonly status: number;
+  readonly field?: string;
+
+  constructor(status: number, field?: string, message?: string) {
     super(message ?? "請求失敗");
+    this.status = status;
+    this.field = field;
   }
 }
 
@@ -109,7 +110,19 @@ export type Group = {
   name: string;
   role: "owner" | "member";
   is_owner: boolean;
+  unread_count?: number;
+  has_unread?: boolean;
 };
+
+export function markGroupRead(
+  groupId: string,
+  messageId: string,
+): Promise<Group> {
+  return apiFetch<Group>(`/api/v1/groups/${groupId}/read`, {
+    method: "POST",
+    body: { message_id: messageId },
+  });
+}
 
 export type Invite = {
   id: string;

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getOrCreateDeviceId } from "@/lib/device";
+import { GROUP_MESSAGE_EVENT, type GroupMessageEventDetail } from "@/lib/unread";
 
 interface InAppNotification {
   id: string;
@@ -22,10 +23,12 @@ export function NotificationBanner() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let heartbeatInterval: NodeJS.Timeout | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
     let isClosed = false;
 
     async function connect() {
       const deviceId = await getOrCreateDeviceId();
+      if (isClosed) return;
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = window.location.host;
       const wsUrl = `${proto}//${host}/api/v1/ws/me`;
@@ -57,6 +60,17 @@ export function NotificationBanner() {
           const data = JSON.parse(event.data);
           if (data.type === "message" && data.message) {
             const msg = data.message;
+            if (msg.group_id !== currentGroupId) {
+              window.dispatchEvent(
+                new CustomEvent<GroupMessageEventDetail>(GROUP_MESSAGE_EVENT, {
+                  detail: {
+                    groupId: msg.group_id,
+                    messageId: msg.id,
+                    userId: msg.user_id,
+                  },
+                }),
+              );
+            }
             // Ignore if event belongs to current actively open group
             if (msg.group_id === currentGroupId) {
               return;
@@ -81,14 +95,21 @@ export function NotificationBanner() {
       };
 
       ws.onclose = () => {
+        clearInterval(heartbeatInterval!);
+        heartbeatInterval = null;
         if (!isClosed) {
-          setTimeout(connect, 3000);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            void connect();
+          }, 3000);
         }
       };
     }
+    void connect();
     return () => {
       isClosed = true;
       clearInterval(heartbeatInterval!);
+      clearTimeout(reconnectTimer!);
       ws?.close();
     };
   }, [currentGroupId]);

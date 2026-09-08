@@ -2,33 +2,24 @@
 
 import { ChevronRightIcon, PlusIcon } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
+import { UnreadBadge } from "@/components/unread-badge";
+import { useUnreadGroups } from "@/components/unread-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Message } from "@/components/ui/message";
 import { apiFetch, ApiRequestError, type Group } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { groupHasUnread } from "@/lib/unread";
 
 export default function GroupsPage() {
-  const [groups, setGroups] = useState<Group[] | null>(null);
+  const { groups, error: groupsError, addGroup } = useUnreadGroups();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-
-    apiFetch<Group[]>("/api/v1/groups", { signal: controller.signal })
-      .then(setGroups)
-      .catch(() => {
-        if (!controller.signal.aborted) setError("讀取失敗，請重新整理");
-      });
-
-    return () => controller.abort();
-  }, []);
 
   async function handleCreate(event: React.SyntheticEvent) {
     event.preventDefault();
@@ -40,7 +31,7 @@ export default function GroupsPage() {
         method: "POST",
         body: { name },
       });
-      setGroups((current) => [...(current ?? []), created]);
+      addGroup(created);
       setName("");
     } catch (caught) {
       setError(
@@ -63,7 +54,9 @@ export default function GroupsPage() {
       </header>
 
       {groups === null ? (
-        <Message tone={error ? "error" : "info"}>{error ?? "載入中…"}</Message>
+        <Message tone={groupsError ? "error" : "info"}>
+          {groupsError ? "讀取失敗，請重新整理" : "載入中…"}
+        </Message>
       ) : groups.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           還沒有群組。建立一個，再把邀請連結傳給朋友。
@@ -85,6 +78,13 @@ export default function GroupsPage() {
                 <span className="font-heading flex-1 text-lg font-black">
                   {group.name}
                 </span>
+                {groupHasUnread(group) ? (
+                  <UnreadBadge
+                    count={group.unread_count ?? 1}
+                    showCount
+                    label={`${group.name}有未讀訊息`}
+                  />
+                ) : null}
                 {group.is_owner ? (
                   <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs font-bold">
                     管理者
