@@ -62,24 +62,31 @@ func (s *store) removeMember(ctx context.Context, groupID, userID uuid.UUID) err
 // non-member's query returns nothing, which becomes ErrNotMember.
 func (s *store) findForMember(ctx context.Context, groupID, userID uuid.UUID) (Group, error) {
 	var g Group
+	var cursorID uuid.NullUUID
+	var cursorAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT g.id, g.name, g.owner_id, m.role, g.created_at
+		SELECT g.id, g.name, g.owner_id, m.role, g.created_at,
+		       m.last_read_message_id, m.last_read_message_created_at
 		FROM groups g
 		JOIN group_members m ON m.group_id = g.id AND m.user_id = $2
 		WHERE g.id = $1
-	`, groupID, userID).Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt)
+	`, groupID, userID).Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Group{}, ErrNotMember
 	}
 	if err != nil {
 		return Group{}, fmt.Errorf("group: find: %w", err)
 	}
+	if cursorID.Valid {
+		g.ReadCursor = ReadCursor{MessageID: cursorID.UUID, CreatedAt: cursorAt.Time}
+	}
 	return g, nil
 }
 
 func (s *store) listForUser(ctx context.Context, userID uuid.UUID) ([]Group, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT g.id, g.name, g.owner_id, m.role, g.created_at
+		SELECT g.id, g.name, g.owner_id, m.role, g.created_at,
+		       m.last_read_message_id, m.last_read_message_created_at
 		FROM groups g
 		JOIN group_members m ON m.group_id = g.id
 		WHERE m.user_id = $1
@@ -93,8 +100,13 @@ func (s *store) listForUser(ctx context.Context, userID uuid.UUID) ([]Group, err
 	groups := []Group{}
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt); err != nil {
+		var cursorID uuid.NullUUID
+		var cursorAt sql.NullTime
+		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt); err != nil {
 			return nil, fmt.Errorf("group: scan: %w", err)
+		}
+		if cursorID.Valid {
+			g.ReadCursor = ReadCursor{MessageID: cursorID.UUID, CreatedAt: cursorAt.Time}
 		}
 		groups = append(groups, g)
 	}
@@ -236,4 +248,32 @@ func (s *store) groupIDsFor(ctx context.Context, userID uuid.UUID) ([]uuid.UUID,
 		groupIDs = append(groupIDs, id)
 	}
 	return groupIDs, rows.Err()
+}
+
+// advanceReadCursor moves a member's own read cursor forward, refusing to
+// move it backward.
+//
+// The comparison is on the pair (created_at, id), matching the chat history
+// cursor: a message id alone cannot be compared for "further along" when two
+// messages can share a timestamp, and comparing timestamps alone would let a
+// tie go either way. WHERE scopes the update to group_id and user_id, so this
+// statement can never touch another member's cursor.
+func (s *store) advanceReadCursor(
+	ctx context.Context,
+	groupID, userID, messageID uuid.UUID,
+	messageCreatedAt time.Time,
+) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE group_members
+		SET last_read_message_id = $3, last_read_message_created_at = $4
+		WHERE group_id = $1 AND user_id = $2
+		  AND (
+		    last_read_message_id IS NULL
+		    OR (last_read_message_created_at, last_read_message_id) < ($4, $3)
+		  )
+	`, groupID, userID, messageID, messageCreatedAt)
+	if err != nil {
+		return fmt.Errorf("group: advance read cursor: %w", err)
+	}
+	return nil
 }

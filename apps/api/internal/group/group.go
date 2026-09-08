@@ -30,6 +30,10 @@ var (
 	ErrOwnerCannotLeave = errors.New("group: owner cannot leave the group")
 	// ErrInviteInvalid covers unknown, expired and revoked invite codes alike.
 	ErrInviteInvalid = errors.New("group: invite is not valid")
+	// ErrMessageNotInGroup covers marking read up to a message that either
+	// does not exist or belongs to a different group. The client cannot
+	// backdate someone else's cursor by guessing an id from another group.
+	ErrMessageNotInGroup = errors.New("group: message is not in this group")
 )
 
 // InvalidInputError describes input the caller can fix.
@@ -59,6 +63,13 @@ type Group struct {
 	OwnerID   uuid.UUID
 	Role      string
 	CreatedAt time.Time
+	// ReadCursor is the caller's own position in this group's chat. Never
+	// filled for anyone but the requester: another member's read state is
+	// not this endpoint's business.
+	ReadCursor ReadCursor
+	// UnreadCount is how many messages, including tombstones, sit after
+	// ReadCursor. Populated by ListForUser; zero value elsewhere.
+	UnreadCount int
 }
 
 type Member struct {
@@ -67,6 +78,20 @@ type Member struct {
 	JoinedAt time.Time
 }
 
+// ReadCursor is how far a member has read a group's chat.
+//
+// It names a message rather than a moment: the pair (created_at, id) matches
+// the chat history cursor exactly, so unread counting agrees with pagination
+// on what "before" and "after" mean and never drifts with the clock.
+type ReadCursor struct {
+	MessageID uuid.UUID
+	CreatedAt time.Time
+}
+
+// IsZero reports a member who has never marked anything read, so every
+// message in the group is still unread.
+func (c ReadCursor) IsZero() bool { return c.MessageID == uuid.Nil }
+
 type Invite struct {
 	ID        uuid.UUID
 	GroupID   uuid.UUID
@@ -74,14 +99,55 @@ type Invite struct {
 	ExpiresAt time.Time
 }
 
+// MessageLocator answers where a message sits in a specific group's history,
+// so a read cursor can be validated against the group it claims to belong to
+// without this package reading chat's own tables.
+//
+// A tombstoned message still resolves: marking read up to a deleted message
+// is a real position in the conversation, not a no-op, so soft-deletion must
+// not make Locate report it missing.
+type MessageLocator interface {
+	Locate(ctx context.Context, groupID, messageID uuid.UUID) (createdAt time.Time, ok bool, err error)
+}
+
+// UnreadCounter tallies, for a batch of groups, how many messages — including
+// tombstones — sit after each group's read cursor.
+//
+// The three slices are parallel and share groupIDs' length. A uuid.Nil cursor
+// message id means the reader has never marked that group read, so every
+// message in it counts.
+type UnreadCounter interface {
+	UnreadCounts(
+		ctx context.Context,
+		groupIDs, cursorMessageIDs []uuid.UUID,
+		cursorCreatedAts []time.Time,
+	) (map[uuid.UUID]int, error)
+}
+
+// ChatReader is what the chat domain gives back so unread state can be
+// computed here without group reading chat_messages directly. Chat
+// implements it; wiring happens after both services exist, the same way
+// push notification wiring does.
+type ChatReader interface {
+	MessageLocator
+	UnreadCounter
+}
+
 type Service struct {
 	db    *sql.DB
 	store *store
 	now   func() time.Time
+	chat  ChatReader
 }
 
 func NewService(db *sql.DB) *Service {
 	return &Service{db: db, store: &store{db: db}, now: time.Now}
+}
+
+// SetChatReader wires in the chat domain's answers about message position and
+// unread counts. Called once at startup, after both services exist.
+func (s *Service) SetChatReader(c ChatReader) {
+	s.chat = c
 }
 
 // Create makes the group and its owner membership in one transaction: a group
@@ -120,13 +186,56 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, name string) (G
 	return g, nil
 }
 
+// ListForUser lists the groups a user belongs to, along with how many
+// messages are unread in each.
+//
+// Unread counting is best-effort against the chat domain: if it fails, the
+// group list itself must still render, just without counts, rather than
+// taking the whole nav down over a feature that is purely decorative.
 func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]Group, error) {
-	return s.store.listForUser(ctx, userID)
+	groups, err := s.store.listForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachUnreadCounts(ctx, groups), nil
 }
 
-// Get returns the group only if the requester belongs to it.
+// Get returns the group only if the requester belongs to it, with the
+// caller's own unread count for it.
 func (s *Service) Get(ctx context.Context, userID, groupID uuid.UUID) (Group, error) {
-	return s.store.findForMember(ctx, groupID, userID)
+	g, err := s.store.findForMember(ctx, groupID, userID)
+	if err != nil {
+		return Group{}, err
+	}
+	groups := s.attachUnreadCounts(ctx, []Group{g})
+	return groups[0], nil
+}
+
+// attachUnreadCounts fills in UnreadCount for each group in one round trip to
+// chat, best-effort: a failure here must not take down whatever endpoint is
+// listing or reading groups, since the count is purely decorative.
+func (s *Service) attachUnreadCounts(ctx context.Context, groups []Group) []Group {
+	if s.chat == nil || len(groups) == 0 {
+		return groups
+	}
+
+	groupIDs := make([]uuid.UUID, len(groups))
+	cursorIDs := make([]uuid.UUID, len(groups))
+	cursorAts := make([]time.Time, len(groups))
+	for i, g := range groups {
+		groupIDs[i] = g.ID
+		cursorIDs[i] = g.ReadCursor.MessageID
+		cursorAts[i] = g.ReadCursor.CreatedAt
+	}
+
+	counts, err := s.chat.UnreadCounts(ctx, groupIDs, cursorIDs, cursorAts)
+	if err != nil {
+		return groups
+	}
+	for i := range groups {
+		groups[i].UnreadCount = counts[groups[i].ID]
+	}
+	return groups
 }
 
 // Members lists the group's membership, for members only.
@@ -240,6 +349,44 @@ func (s *Service) Leave(ctx context.Context, userID, groupID uuid.UUID) error {
 		return ErrOwnerCannotLeave
 	}
 	return s.store.removeMember(ctx, groupID, userID)
+}
+
+// MarkRead advances the caller's own read cursor for a group to the given
+// message.
+//
+// The message must belong to this group: a client-supplied id from another
+// group must not be accepted, or a member could forge having read messages
+// they were never shown. Moving the cursor backward is refused too — a
+// stale client replaying an old "mark read" after a newer one must not
+// resurrect messages the user already dismissed.
+func (s *Service) MarkRead(ctx context.Context, userID, groupID, messageID uuid.UUID) error {
+	if _, err := s.store.findForMember(ctx, groupID, userID); err != nil {
+		return err
+	}
+	if s.chat == nil {
+		return fmt.Errorf("group: mark read: chat reader is not wired")
+	}
+
+	createdAt, ok, err := s.chat.Locate(ctx, groupID, messageID)
+	if err != nil {
+		return fmt.Errorf("group: locate message: %w", err)
+	}
+	if !ok {
+		return ErrMessageNotInGroup
+	}
+
+	return s.store.advanceReadCursor(ctx, groupID, userID, messageID, createdAt)
+}
+
+// AdvanceOwnCursor moves a member's read cursor forward without the
+// membership or Locate round trip MarkRead does.
+//
+// It exists for chat to call right after a member's own message is stored:
+// the caller (chat) already knows the message belongs to this group and that
+// the sender is a member, because chat just checked both to accept the send.
+// Re-deriving that here would be the same two facts asked a second time.
+func (s *Service) AdvanceOwnCursor(ctx context.Context, userID, groupID, messageID uuid.UUID, messageCreatedAt time.Time) error {
+	return s.store.advanceReadCursor(ctx, groupID, userID, messageID, messageCreatedAt)
 }
 
 // newInviteCode returns a code that is unguessable but still readable enough

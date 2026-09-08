@@ -218,13 +218,22 @@ type PushNotifier interface {
 	NotifyMessage(ctx context.Context, groupID uuid.UUID, senderID uuid.UUID, messageType string)
 }
 
+// ReadCursors advances a member's own read cursor. The group domain owns the
+// cursor and implements this; chat calls it after a send succeeds so that
+// posting a message never leaves the sender's own group looking unread to
+// them.
+type ReadCursors interface {
+	AdvanceOwnCursor(ctx context.Context, userID, groupID, messageID uuid.UUID, messageCreatedAt time.Time) error
+}
+
 type Service struct {
-	store    *store
-	members  Membership
-	hub      *Hub
-	objects  storage.ObjectStorage
-	stickers Stickers
-	push     PushNotifier
+	store       *store
+	members     Membership
+	hub         *Hub
+	objects     storage.ObjectStorage
+	stickers    Stickers
+	push        PushNotifier
+	readCursors ReadCursors
 }
 
 func NewService(
@@ -244,6 +253,23 @@ func NewService(
 }
 func (s *Service) SetPushNotifier(p PushNotifier) {
 	s.push = p
+}
+
+// SetReadCursors wires in the group domain's cursor advance, after both
+// services exist.
+func (s *Service) SetReadCursors(r ReadCursors) {
+	s.readCursors = r
+}
+
+// markSenderRead advances the sender's own cursor to the message they just
+// posted, best-effort: a failure here must not undo a message that already
+// sent successfully, it would just leave the sender's own group looking
+// unread to them until their client marks it read explicitly.
+func (s *Service) markSenderRead(ctx context.Context, userID, groupID, messageID uuid.UUID, createdAt time.Time) {
+	if s.readCursors == nil {
+		return
+	}
+	_ = s.readCursors.AdvanceOwnCursor(ctx, userID, groupID, messageID, createdAt)
 }
 
 // Send stores a message and then hands the stored row to everyone connected.
@@ -359,6 +385,7 @@ func (s *Service) Send(ctx context.Context, userID, groupID uuid.UUID, in SendIn
 		// Only a genuinely new message is announced; a retry must not make
 		// everyone's screen show it twice.
 		s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
+		s.markSenderRead(ctx, userID, groupID, message.ID, message.CreatedAt)
 		if s.push != nil {
 			s.push.NotifyMessage(ctx, groupID, userID, message.Type)
 		}
@@ -607,5 +634,31 @@ func (s *Service) AnnounceMeal(ctx context.Context, userID, groupID, mealID uuid
 		return err
 	}
 	s.hub.Broadcast(groupID, Event{Kind: EventMessage, Message: message})
+	s.markSenderRead(ctx, userID, groupID, message.ID, message.CreatedAt)
 	return nil
+}
+
+// Locate reports where a message sits in a group's history, for the group
+// domain's read-cursor validation.
+//
+// It matches on group_id explicitly rather than trusting the id alone: a
+// message id from a different group must not validate a cursor claiming to
+// be for this one. Tombstones resolve normally — marking read up to a
+// deleted message is a real position in the conversation.
+func (s *Service) Locate(ctx context.Context, groupID, messageID uuid.UUID) (time.Time, bool, error) {
+	return s.store.locate(ctx, groupID, messageID)
+}
+
+// UnreadCounts tallies, for each of a batch of groups, how many messages —
+// including tombstones — sit after that group's read cursor.
+//
+// groupIDs, cursorMessageIDs and cursorCreatedAts are parallel slices: index i
+// of each describes one group. A zero-value cursor (uuid.Nil) means the
+// reader has never marked that group read, so every message in it is unread.
+func (s *Service) UnreadCounts(
+	ctx context.Context,
+	groupIDs, cursorMessageIDs []uuid.UUID,
+	cursorCreatedAts []time.Time,
+) (map[uuid.UUID]int, error) {
+	return s.store.unreadCounts(ctx, groupIDs, cursorMessageIDs, cursorCreatedAts)
 }

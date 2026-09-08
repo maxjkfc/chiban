@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -393,4 +394,109 @@ func (s *store) findOwnedMedia(ctx context.Context, mediaID, userID uuid.UUID) (
 		return "", fmt.Errorf("chat: find own media: %w", err)
 	}
 	return mediaType, nil
+}
+
+// locate reports a message's created_at within a specific group, deliberately
+// scoped by group_id so a message id from a different group never resolves.
+// Tombstones resolve like any other message: a soft delete does not remove
+// the row.
+func (s *store) locate(ctx context.Context, groupID, messageID uuid.UUID) (time.Time, bool, error) {
+	var createdAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT created_at FROM chat_messages WHERE id = $1 AND group_id = $2
+	`, messageID, groupID).Scan(&createdAt)
+	if errors.Is(err, errNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("chat: locate message: %w", err)
+	}
+	return createdAt, true, nil
+}
+
+// unreadCounts tallies, per group, how many messages (tombstones included)
+// sit after each group's read cursor.
+//
+// Split into two queries rather than one with nullable array elements: pgx's
+// array encoding has no clean way to carry a per-element NULL alongside
+// uuid.UUID values, so groups with a cursor and groups that have never been
+// read (cursor is the zero UUID) are queried separately instead of forcing a
+// SQL NULL through the wire.
+func (s *store) unreadCounts(
+	ctx context.Context,
+	groupIDs, cursorMessageIDs []uuid.UUID,
+	cursorCreatedAts []time.Time,
+) (map[uuid.UUID]int, error) {
+	counts := make(map[uuid.UUID]int, len(groupIDs))
+	if len(groupIDs) == 0 {
+		return counts, nil
+	}
+
+	var (
+		neverReadGroupIDs                    []uuid.UUID
+		cursoredGroupIDs, cursoredMessageIDs []uuid.UUID
+		cursoredCreatedAts                   []time.Time
+	)
+	for i, groupID := range groupIDs {
+		if cursorMessageIDs[i] == uuid.Nil {
+			neverReadGroupIDs = append(neverReadGroupIDs, groupID)
+			continue
+		}
+		cursoredGroupIDs = append(cursoredGroupIDs, groupID)
+		cursoredMessageIDs = append(cursoredMessageIDs, cursorMessageIDs[i])
+		cursoredCreatedAts = append(cursoredCreatedAts, cursorCreatedAts[i])
+	}
+
+	if len(neverReadGroupIDs) > 0 {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT group_id, count(*)
+			FROM chat_messages
+			WHERE group_id = ANY($1)
+			GROUP BY group_id
+		`, neverReadGroupIDs)
+		if err != nil {
+			return nil, fmt.Errorf("chat: unread counts (never read): %w", err)
+		}
+		if err := scanGroupCounts(rows, counts); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(cursoredGroupIDs) > 0 {
+		// unnest rebuilds the three parallel slices as rows: index i of each
+		// slice describes one group's cursor. The comparison on
+		// (created_at, id) rather than created_at alone matches the same
+		// tie-break the chat history cursor uses, so a message sharing the
+		// cursor's timestamp is never double-counted or dropped.
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT cursors.group_id, count(m.id)
+			FROM unnest($1::uuid[], $2::uuid[], $3::timestamptz[])
+				AS cursors(group_id, cursor_message_id, cursor_created_at)
+			JOIN chat_messages m ON m.group_id = cursors.group_id
+				AND (m.created_at, m.id) > (cursors.cursor_created_at, cursors.cursor_message_id)
+			GROUP BY cursors.group_id
+		`, cursoredGroupIDs, cursoredMessageIDs, cursoredCreatedAts)
+		if err != nil {
+			return nil, fmt.Errorf("chat: unread counts (cursored): %w", err)
+		}
+		if err := scanGroupCounts(rows, counts); err != nil {
+			return nil, err
+		}
+	}
+
+	return counts, nil
+}
+
+// scanGroupCounts drains a (group_id, count) result set into counts.
+func scanGroupCounts(rows *sql.Rows, counts map[uuid.UUID]int) error {
+	defer rows.Close()
+	for rows.Next() {
+		var groupID uuid.UUID
+		var count int
+		if err := rows.Scan(&groupID, &count); err != nil {
+			return fmt.Errorf("chat: scan unread count: %w", err)
+		}
+		counts[groupID] = count
+	}
+	return rows.Err()
 }
