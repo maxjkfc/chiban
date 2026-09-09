@@ -270,11 +270,14 @@ The UI is mobile-first.
 Primary navigation:
 
 ```text
-Today
-Record
 Groups
+Record (centered primary action)
 Me
 ```
+
+Today remains reachable from the home surface and meal links; it is not a primary bottom-nav
+item as of the issue #62 IA revision (bottom-nav is now a 3-item rail with Record centered as
+the primary action).
 
 Meal recording is a dedicated flow, not just a chat composer mode.
 
