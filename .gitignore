@@ -21,3 +21,4 @@ next-env.d.ts
 # the routing belongs in review — but the JSON beside it is the key to the
 # tunnel and must never be.
 deploy/cloudflared/*.json
+/.worktrees/
