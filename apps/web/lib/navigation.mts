@@ -1,3 +1,9 @@
+export const appShellHomeLink = {
+  href: "/today",
+  label: "吃伴",
+  ariaLabel: "回到今日",
+} as const;
+
 export const primaryNavItems = [
   { href: "/groups", label: "群組", icon: "groups", primary: false },
   { href: "/record", label: "記錄", icon: "record", primary: true },

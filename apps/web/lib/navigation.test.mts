@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isActiveNavItem, primaryNavItems } from "./navigation.mts";
+import {
+  appShellHomeLink,
+  isActiveNavItem,
+  primaryNavItems,
+} from "./navigation.mts";
 
 test("primary navigation has an odd number of unique destinations", () => {
   assert.equal(primaryNavItems.length % 2, 1);
@@ -26,4 +30,12 @@ test("nested destinations keep their parent navigation item active", () => {
   assert.equal(isActiveNavItem("/profile/stickers", "/profile"), true);
   assert.equal(isActiveNavItem("/groups/group-1", "/groups"), true);
   assert.equal(isActiveNavItem("/recording", "/record"), false);
+});
+
+test("app shell keeps an accessible route back to Today", () => {
+  assert.deepEqual(appShellHomeLink, {
+    href: "/today",
+    label: "吃伴",
+    ariaLabel: "回到今日",
+  });
 });
