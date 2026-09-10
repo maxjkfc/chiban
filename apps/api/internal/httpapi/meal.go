@@ -232,6 +232,88 @@ func deleteMealHandler(d Deps) http.HandlerFunc {
 	}
 }
 
+// dailySummaryDayResponse is one calendar day's recording activity. It always
+// appears for every date in the requested range, even a day with zero meals,
+// so the frontend can render a full 7-day trophy row or month calendar
+// without filling in gaps itself.
+type dailySummaryDayResponse struct {
+	Date string `json:"date"`
+	// MealCount is every meal logged that day, including more than one of
+	// the same type (e.g. two separate lunches count as 2, not 1).
+	MealCount int `json:"meal_count"`
+	// MealTypes has exactly MealCount entries, one per meal in eaten_at
+	// order; an untyped meal appears as "". It is not deduplicated, so a
+	// client can distinguish "lunch, lunch" from a single lunch.
+	MealTypes []string `json:"meal_types"`
+}
+
+type dailySummaryResponse struct {
+	Days []dailySummaryDayResponse `json:"days"`
+}
+
+// dailySummaryHandler answers "how much did I record, per day, in this
+// range" — the one query behind both the 7-day trophy row and the month
+// calendar view. Like listMealsHandler, the day boundary is decided by the
+// caller's own profile timezone, never the server clock, and only the
+// caller's own meals are ever counted.
+//
+// GET /api/v1/meals/daily-summary?start=YYYY-MM-DD&end=YYYY-MM-DD
+//
+// Both query parameters are required. The range is inclusive on both ends
+// and capped at meal.MaxDailySummaryRangeDays days; a larger range answers
+// 400. Response:
+//
+//	{
+//	  "days": [
+//	    {"date": "2026-03-14", "meal_count": 2, "meal_types": ["breakfast", "lunch"]},
+//	    {"date": "2026-03-15", "meal_count": 0, "meal_types": []}
+//	  ]
+//	}
+func dailySummaryHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := auth.UserFromContext(r.Context()).ID
+
+		loc, ok := userLocation(w, r, d, userID)
+		if !ok {
+			return
+		}
+
+		startRaw := r.URL.Query().Get("start")
+		endRaw := r.URL.Query().Get("end")
+		if startRaw == "" || endRaw == "" {
+			writeError(w, http.StatusBadRequest, "start and end are required", "start")
+			return
+		}
+
+		start, err := meal.ParseDate(startRaw)
+		if err != nil {
+			writeMealError(w, d, err)
+			return
+		}
+		end, err := meal.ParseDate(endRaw)
+		if err != nil {
+			writeMealError(w, d, err)
+			return
+		}
+
+		days, err := d.Meal.DailySummary(r.Context(), userID, start, end, loc)
+		if err != nil {
+			writeMealError(w, d, err)
+			return
+		}
+
+		out := dailySummaryResponse{Days: make([]dailySummaryDayResponse, 0, len(days))}
+		for _, day := range days {
+			out.Days = append(out.Days, dailySummaryDayResponse{
+				Date:      day.Date.String(),
+				MealCount: day.MealCount,
+				MealTypes: day.MealTypes,
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
 // userLocation resolves the requester's timezone. The meal domain never reads
 // profiles itself; the handler brings the zone to it.
 func userLocation(w http.ResponseWriter, r *http.Request, d Deps, userID uuid.UUID) (*time.Location, bool) {

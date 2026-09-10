@@ -138,6 +138,7 @@ func NewRouter(d Deps) http.Handler {
 
 	mux.Handle("POST /api/v1/meals", d.Auth.RequireUser(createMealHandler(d)))
 	mux.Handle("GET /api/v1/meals", d.Auth.RequireUser(listMealsHandler(d)))
+	mux.Handle("GET /api/v1/meals/daily-summary", d.Auth.RequireUser(dailySummaryHandler(d)))
 	mux.Handle("GET /api/v1/meals/{meal_id}", d.Auth.RequireUser(getMealHandler(d)))
 	mux.Handle("PATCH /api/v1/meals/{meal_id}", d.Auth.RequireUser(patchMealHandler(d)))
 	mux.Handle("DELETE /api/v1/meals/{meal_id}", d.Auth.RequireUser(deleteMealHandler(d)))

@@ -223,6 +223,85 @@ func (s *Service) ListForDay(ctx context.Context, userID uuid.UUID, date Date, l
 	return s.store.listBetween(ctx, userID, start, end)
 }
 
+// MaxDailySummaryRangeDays bounds how many calendar days DailySummary will
+// answer for in one call — about a quarter. Trophy rows and month calendars
+// are the only two shapes that call it, and neither needs more than that;
+// letting the range grow without a limit would turn one request into an
+// unbounded table scan of a user's whole history.
+const MaxDailySummaryRangeDays = 92
+
+// DailySummaryDay is one calendar day's worth of recording activity for its
+// owner: how many meals were logged and what types they were. It always
+// exists for every date in the requested range, even a day with zero meals,
+// so a client can render a full calendar grid or streak row without having
+// to fill in the gaps itself.
+type DailySummaryDay struct {
+	Date Date
+	// MealCount is every meal recorded that day, including duplicates of the
+	// same meal type — a second breakfast is two, not one.
+	MealCount int
+	// MealTypes is one entry per meal in eaten_at order, "" for a meal saved
+	// without a type. len(MealTypes) always equals MealCount: this is the
+	// per-meal detail behind the count, not a deduplicated badge set, so a
+	// client can tell "three separate lunches" apart from "breakfast, lunch,
+	// dinner" without a second request.
+	MealTypes []string
+}
+
+// DailySummary aggregates a user's own meal_records into one entry per
+// calendar day in [start, end], inclusive on both ends, bucketed by that
+// user's own timezone — never the server's local time or UTC. It is the one
+// query behind both the 7-day trophy row and the month calendar view: both
+// read this same shape and never need a second query to fill in a day.
+func (s *Service) DailySummary(ctx context.Context, userID uuid.UUID, start, end Date, loc *time.Location) ([]DailySummaryDay, error) {
+	span := start.DaysUntil(end)
+	if span < 0 {
+		return nil, InvalidInputError{Field: "end", Message: "must not be before start"}
+	}
+	if span+1 > MaxDailySummaryRangeDays {
+		return nil, InvalidInputError{
+			Field:   "end",
+			Message: fmt.Sprintf("the range must not exceed %d days", MaxDailySummaryRangeDays),
+		}
+	}
+
+	// One instant range covers the whole request: DayRange is monotonic in
+	// its date argument, so the first day's start and the last day's end
+	// bound every day in between.
+	rangeStart, _ := DayRange(start, loc)
+	_, rangeEnd := DayRange(end, loc)
+
+	rows, err := s.store.eatenBetween(ctx, userID, rangeStart, rangeEnd)
+	if err != nil {
+		return nil, err
+	}
+
+	byDate := map[Date]*DailySummaryDay{}
+	for _, row := range rows {
+		date := DateOf(row.EatenAt, loc)
+		day, ok := byDate[date]
+		if !ok {
+			day = &DailySummaryDay{Date: date}
+			byDate[date] = day
+		}
+		day.MealCount++
+		day.MealTypes = append(day.MealTypes, row.MealType)
+	}
+
+	out := make([]DailySummaryDay, 0, span+1)
+	for d := start; ; d = d.AddDays(1) {
+		if day, ok := byDate[d]; ok {
+			out = append(out, *day)
+		} else {
+			out = append(out, DailySummaryDay{Date: d, MealTypes: []string{}})
+		}
+		if d == end {
+			break
+		}
+	}
+	return out, nil
+}
+
 // Update edits a meal. Only the owner may: this is not the same check as
 // reading, which meal sharing widens later.
 func (s *Service) Update(ctx context.Context, userID, mealID uuid.UUID, in UpdateInput) (Meal, error) {

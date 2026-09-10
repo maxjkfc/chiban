@@ -168,6 +168,44 @@ func (s *store) listBetween(ctx context.Context, userID uuid.UUID, start, end ti
 	return meals, nil
 }
 
+// eatenRow is the sliver of a meal that DailySummary needs: which instant it
+// was eaten and what type it was. It deliberately skips everything about
+// photos or description — the aggregate has no use for them, and loading
+// them for a whole quarter's worth of meals would be the wasted work this
+// query exists to avoid.
+type eatenRow struct {
+	EatenAt  time.Time
+	MealType string
+}
+
+// eatenBetween loads just enough of a user's own meals in [start, end) to
+// bucket them by day: DailySummary does the bucketing in Go rather than SQL,
+// because which calendar day an instant belongs to depends on the caller's
+// timezone, and that decision belongs in the one place (DateOf) the rest of
+// the package already trusts for it.
+func (s *store) eatenBetween(ctx context.Context, userID uuid.UUID, start, end time.Time) ([]eatenRow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT eaten_at, coalesce(meal_type, '')
+		FROM meal_records
+		WHERE user_id = $1 AND deleted_at IS NULL AND eaten_at >= $2 AND eaten_at < $3
+		ORDER BY eaten_at
+	`, userID, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("meal: daily summary: %w", err)
+	}
+	defer rows.Close()
+
+	out := []eatenRow{}
+	for rows.Next() {
+		var r eatenRow
+		if err := rows.Scan(&r.EatenAt, &r.MealType); err != nil {
+			return nil, fmt.Errorf("meal: scan daily summary: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // photosFor loads every meal's photos in one query. A query per meal would be
 // harmless for one person's day but not for slice 9's group meal cards.
 func (s *store) photosFor(ctx context.Context, mealIDs []uuid.UUID) (map[uuid.UUID][]Photo, error) {
