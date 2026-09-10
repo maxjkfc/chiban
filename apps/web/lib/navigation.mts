@@ -1,6 +1,6 @@
 export const appShellHomeLink = {
   href: "/today",
-  label: "吃伴",
+  label: "返回今日紀錄",
   ariaLabel: "回到今日",
 } as const;
 

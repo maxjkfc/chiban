@@ -35,7 +35,7 @@ test("nested destinations keep their parent navigation item active", () => {
 test("app shell keeps an accessible route back to Today", () => {
   assert.deepEqual(appShellHomeLink, {
     href: "/today",
-    label: "吃伴",
+    label: "返回今日紀錄",
     ariaLabel: "回到今日",
   });
 });
