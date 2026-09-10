@@ -81,3 +81,22 @@ func DateOf(instant time.Time, loc *time.Location) Date {
 	local := instant.In(loc)
 	return Date{Year: local.Year(), Month: local.Month(), Day: local.Day()}
 }
+
+// AddDays returns the date n days after d (n may be negative). It relies on
+// time.Date normalising an out-of-range day component, the same trick
+// DayRange uses for "the day after d" — there is deliberately only one place
+// that does calendar-day arithmetic.
+func (d Date) AddDays(n int) Date {
+	t := time.Date(d.Year, d.Month, d.Day+n, 0, 0, 0, 0, time.UTC)
+	return Date{Year: t.Year(), Month: t.Month(), Day: t.Day()}
+}
+
+// DaysUntil is how many calendar days lie between d and other — positive when
+// other is later, negative when earlier, independent of any timezone (both
+// dates are treated as bare calendar days). d.AddDays(d.DaysUntil(other)) ==
+// other.
+func (d Date) DaysUntil(other Date) int {
+	dt := time.Date(d.Year, d.Month, d.Day, 0, 0, 0, 0, time.UTC)
+	ot := time.Date(other.Year, other.Month, other.Day, 0, 0, 0, 0, time.UTC)
+	return int(ot.Sub(dt).Hours() / 24)
+}

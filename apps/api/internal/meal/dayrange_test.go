@@ -147,3 +147,43 @@ func TestTodayInUsesTheUsersZoneNotTheServers(t *testing.T) {
 		t.Fatalf("today in UTC = %s, want the 14th", got)
 	}
 }
+
+// AddDays has to cross month and year boundaries the same way it crosses an
+// ordinary day, since it is what walks a summary range one date at a time.
+func TestDateAddDaysCrossesMonthAndYearBoundaries(t *testing.T) {
+	cases := []struct {
+		name string
+		date meal.Date
+		n    int
+		want meal.Date
+	}{
+		{"ordinary", meal.Date{Year: 2026, Month: time.March, Day: 14}, 1, meal.Date{Year: 2026, Month: time.March, Day: 15}},
+		{"month end", meal.Date{Year: 2026, Month: time.March, Day: 31}, 1, meal.Date{Year: 2026, Month: time.April, Day: 1}},
+		{"year end", meal.Date{Year: 2025, Month: time.December, Day: 31}, 1, meal.Date{Year: 2026, Month: time.January, Day: 1}},
+		{"negative", meal.Date{Year: 2026, Month: time.March, Day: 1}, -1, meal.Date{Year: 2026, Month: time.February, Day: 28}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.date.AddDays(tc.n); got != tc.want {
+				t.Fatalf("%s.AddDays(%d) = %s, want %s", tc.date, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDateDaysUntilIsTheInverseOfAddDays(t *testing.T) {
+	start := meal.Date{Year: 2026, Month: time.March, Day: 1}
+	end := meal.Date{Year: 2026, Month: time.April, Day: 5}
+
+	n := start.DaysUntil(end)
+	if got := start.AddDays(n); got != end {
+		t.Fatalf("start.AddDays(start.DaysUntil(end)) = %s, want %s", got, end)
+	}
+	if n <= 0 {
+		t.Fatalf("DaysUntil(end) = %d, want a positive count since end is later", n)
+	}
+
+	if got := end.DaysUntil(start); got != -n {
+		t.Fatalf("end.DaysUntil(start) = %d, want %d", got, -n)
+	}
+}
