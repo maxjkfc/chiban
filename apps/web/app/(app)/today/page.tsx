@@ -1,6 +1,12 @@
 "use client";
 
-import { CameraIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import {
+  CalendarDaysIcon,
+  CameraIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  TrophyIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -10,6 +16,7 @@ import { Message } from "@/components/ui/message";
 import {
   apiFetch,
   apiUrl,
+  fetchDailySummary,
   localTimeOfDay,
   mealTypeLabel,
   shiftDate,
@@ -17,6 +24,17 @@ import {
   type MealDay,
   type Profile,
 } from "@/lib/api";
+import {
+  calendarCells,
+  dateRangeDates,
+  monthRange,
+  shiftMonth,
+  trophyProgress,
+  weekRange,
+  type DailySummaryDay,
+  type DailySummaryResponse,
+} from "@/lib/daily-summary.mts";
+import { dateInTimezone } from "@/lib/date.mts";
 import { isTodaySelection } from "@/lib/today-page-state.mts";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +53,11 @@ export default function TodayPage() {
   const [date, setDate] = useState<string | null>(null);
   const [timezone, setTimezone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<DailySummaryResponse | null>(null);
+  const [summaryKey, setSummaryKey] = useState<string | null>(null);
+  const [summaryFailedKey, setSummaryFailedKey] = useState<string | null>(null);
+  const [view, setView] = useState<"day" | "calendar">("day");
+  const [calendarMonth, setCalendarMonth] = useState<string | null>(null);
 
   const load = useCallback((requested: string | null, signal?: AbortSignal) => {
     const query = requested ? `?date=${requested}` : "";
@@ -68,8 +91,61 @@ export default function TodayPage() {
     return () => controller.abort();
   }, []);
 
+  const localToday = timezone
+    ? dateInTimezone(new Date(), timezone)
+    : day?.date ?? null;
+  const activeCalendarMonth = calendarMonth ?? localToday?.slice(0, 7) ?? null;
+  const summaryRange = timezone
+    ? view === "calendar"
+      ? activeCalendarMonth ? monthRange(activeCalendarMonth) : null
+      : weekRange(dateInTimezone(new Date(), timezone))
+    : null;
+  const summaryStart = summaryRange?.start ?? null;
+  const summaryEnd = summaryRange?.end ?? null;
+  const currentSummaryKey = summaryStart && summaryEnd
+    ? `${summaryStart}:${summaryEnd}`
+    : null;
+  const summaryLoading = currentSummaryKey !== null &&
+    summaryKey !== currentSummaryKey && summaryFailedKey !== currentSummaryKey;
+  const visibleSummary = summaryKey === currentSummaryKey ? summary : null;
+
+  useEffect(() => {
+    if (!summaryStart || !summaryEnd || !currentSummaryKey) return;
+
+    const controller = new AbortController();
+    fetchDailySummary(summaryStart, summaryEnd, controller.signal)
+      .then((loaded) => {
+        setSummary(loaded);
+        setSummaryKey(currentSummaryKey);
+        setSummaryFailedKey(null);
+        setError(null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setSummaryFailedKey(currentSummaryKey);
+          setError("里程碑資料讀取失敗，請重新整理");
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentSummaryKey, summaryEnd, summaryStart]);
+
   const shown = day?.date ?? null;
   const isToday = isTodaySelection(date, timezone);
+  const summaryByDate = new Map(
+    (visibleSummary?.days ?? []).map((summaryDay) => [summaryDay.date, summaryDay]),
+  );
+  const trophyDates = localToday
+    ? dateRangeDates(weekRange(localToday))
+    : [];
+  const openCalendar = () => {
+    setCalendarMonth((shown ?? localToday)?.slice(0, 7) ?? null);
+    setView("calendar");
+  };
+  const selectCalendarDate = (selectedDate: string) => {
+    setDate(selectedDate);
+    setView("day");
+  };
 
   // Newest first. The backend answers in the order the meals were eaten, which
   // is the right order for a diary but puts the meal most likely to have been
@@ -98,42 +174,96 @@ export default function TodayPage() {
         ) : null}
       </header>
 
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="前一天"
-          onClick={() => setDate(shiftDate(shown ?? "", -1))}
-          disabled={!shown}
+      {localToday ? (
+        <section
+          aria-label="七天里程碑"
+          className="bg-card shadow-pop flex flex-col gap-3 rounded-2xl p-3"
         >
-          <ChevronLeftIcon aria-hidden />
-        </Button>
-        <input
-          type="date"
-          aria-label="選擇日期"
-          value={shown ?? ""}
-          onChange={(event) => setDate(event.target.value || null)}
-          className="border-input bg-card h-11 flex-1 rounded-lg border px-3 text-sm"
-        />
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label="後一天"
-          onClick={() => setDate(shiftDate(shown ?? "", 1))}
-          disabled={!shown}
-        >
-          <ChevronRightIcon aria-hidden />
-        </Button>
-        {!isToday ? (
-          <Button variant="ghost" onClick={() => setDate(null)}>
-            回到今天
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-primary-ink text-xs font-bold tracking-[0.14em]">
+                RECORDING RITUAL
+              </p>
+              <h2 className="text-lg">{view === "day" ? "七天里程碑" : "典藏日曆"}</h2>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-pressed={view === "calendar"}
+              aria-label={view === "day" ? "切換月曆檢視" : "返回每日檢視"}
+              onClick={() => view === "day" ? openCalendar() : setView("day")}
+            >
+              <CalendarDaysIcon aria-hidden />
+              {view === "day" ? "月曆" : "每日"}
+            </Button>
+          </div>
+
+          {view === "day" ? (
+            summaryLoading && visibleSummary === null ? (
+              <Message>里程碑載入中…</Message>
+            ) : (
+              <TrophyRail
+                dates={trophyDates}
+                today={localToday}
+                days={summaryByDate}
+                onSelectDate={(selectedDate) => setDate(selectedDate)}
+              />
+            )
+          ) : null}
+        </section>
+      ) : null}
+
+      {view === "day" ? (
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="前一天"
+            onClick={() => setDate(shiftDate(shown ?? "", -1))}
+            disabled={!shown}
+          >
+            <ChevronLeftIcon aria-hidden />
           </Button>
-        ) : null}
-      </div>
+          <input
+            type="date"
+            aria-label="選擇日期"
+            value={shown ?? ""}
+            onChange={(event) => setDate(event.target.value || null)}
+            className="border-input bg-card h-11 flex-1 rounded-lg border px-3 text-sm"
+          />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="後一天"
+            onClick={() => setDate(shiftDate(shown ?? "", 1))}
+            disabled={!shown}
+          >
+            <ChevronRightIcon aria-hidden />
+          </Button>
+          {!isToday ? (
+            <Button variant="ghost" onClick={() => setDate(null)}>
+              回到今天
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? <Message tone="error">{error}</Message> : null}
 
-      {day === null ? (
+      {view === "calendar" && activeCalendarMonth ? (
+        summaryLoading && visibleSummary === null ? (
+          <Message>月曆載入中…</Message>
+        ) : (
+          <MonthCalendar
+            month={activeCalendarMonth}
+            today={localToday}
+            selectedDate={shown}
+            days={summaryByDate}
+            onChangeMonth={(amount) => setCalendarMonth(shiftMonth(activeCalendarMonth, amount))}
+            onSelectDate={selectCalendarDate}
+          />
+        )
+      ) : day === null ? (
         <Message>載入中…</Message>
       ) : meals.length === 0 ? (
         <div className="flex flex-col items-start gap-4 pt-2">
@@ -159,7 +289,7 @@ export default function TodayPage() {
         </ul>
       )}
 
-      {meals.length > 0 ? (
+      {view === "day" && meals.length > 0 ? (
         <Link
           href="/record"
           className={cn(buttonVariants({ size: "lg" }), "mt-1 w-full")}
@@ -169,6 +299,193 @@ export default function TodayPage() {
         </Link>
       ) : null}
     </main>
+  );
+}
+
+function dateAtNoonUTC(date: string): Date {
+  return new Date(`${date}T12:00:00Z`);
+}
+
+function formatDayNumber(date: string): string {
+  return new Intl.DateTimeFormat("zh-TW", {
+    month: "numeric",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(dateAtNoonUTC(date));
+}
+
+function formatWeekday(date: string): string {
+  return new Intl.DateTimeFormat("zh-TW", {
+    weekday: "short",
+    timeZone: "UTC",
+  }).format(dateAtNoonUTC(date));
+}
+
+function formatMonth(month: string): string {
+  return new Intl.DateTimeFormat("zh-TW", {
+    year: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(dateAtNoonUTC(`${month}-01`));
+}
+
+function TrophyRail({
+  dates,
+  today,
+  days,
+  onSelectDate,
+}: {
+  dates: string[];
+  today: string;
+  days: ReadonlyMap<string, DailySummaryDay>;
+  onSelectDate: (date: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-7 gap-1" data-testid="trophy-rail">
+      {dates.map((date) => {
+        const mealCount = days.get(date)?.meal_count ?? 0;
+        const progress = trophyProgress(mealCount);
+        return (
+          <button
+            key={date}
+            type="button"
+            data-progress={progress}
+            aria-label={`${formatDayNumber(date)}，${progress}/3，${mealCount} 筆紀錄`}
+            aria-current={date === today ? "date" : undefined}
+            onClick={() => onSelectDate(date)}
+            className={cn(
+              "flex min-w-0 flex-col items-center gap-1 rounded-xl px-0.5 py-1.5 text-xs transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+              date === today && "bg-secondary font-bold",
+            )}
+          >
+            <span className="text-muted-foreground text-[0.68rem] leading-none">
+              {formatWeekday(date)}
+            </span>
+            <TrophyIcon
+              aria-hidden
+              className={cn(
+                "size-5 transition-colors",
+                progress > 0 ? "text-mango fill-mango" : "text-muted-foreground/35",
+              )}
+            />
+            <span className="font-semibold leading-none">{progress}/3</span>
+            <span className="text-muted-foreground text-[0.65rem] leading-none">
+              {formatDayNumber(date)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MonthCalendar({
+  month,
+  today,
+  selectedDate,
+  days,
+  onChangeMonth,
+  onSelectDate,
+}: {
+  month: string;
+  today: string | null;
+  selectedDate: string | null;
+  days: ReadonlyMap<string, DailySummaryDay>;
+  onChangeMonth: (amount: number) => void;
+  onSelectDate: (date: string) => void;
+}) {
+  const cells = calendarCells(month);
+  const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
+
+  return (
+    <section aria-label={`${formatMonth(month)}月曆`} className="flex flex-col gap-3">
+      <header className="flex items-center justify-between">
+        <h2 className="text-lg">{formatMonth(month)}</h2>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="上一個月"
+            onClick={() => onChangeMonth(-1)}
+          >
+            <ChevronLeftIcon aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="下一個月"
+            onClick={() => onChangeMonth(1)}
+          >
+            <ChevronRightIcon aria-hidden />
+          </Button>
+        </div>
+      </header>
+      <div className="grid grid-cols-7 gap-1 text-center text-xs">
+        {weekdays.map((weekday) => (
+          <span
+            key={weekday}
+            aria-hidden
+            className="text-muted-foreground py-1 font-semibold"
+          >
+            {weekday}
+          </span>
+        ))}
+        {cells.map((date, index) => (
+          date ? (
+            <CalendarDay
+              key={date}
+              date={date}
+              today={today}
+              selected={date === selectedDate}
+              summary={days.get(date)}
+              onSelectDate={onSelectDate}
+            />
+          ) : (
+            <span key={`empty-${index}`} aria-hidden className="min-h-16 rounded-xl" />
+          )
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CalendarDay({
+  date,
+  today,
+  selected,
+  summary,
+  onSelectDate,
+}: {
+  date: string;
+  today: string | null;
+  selected: boolean;
+  summary: DailySummaryDay | undefined;
+  onSelectDate: (date: string) => void;
+}) {
+  const mealCount = summary?.meal_count ?? 0;
+  return (
+    <button
+      type="button"
+      data-meal-count={mealCount}
+      aria-label={`${formatDayNumber(date)}，${mealCount ? `${mealCount} 筆紀錄` : "無紀錄"}`}
+      aria-current={date === today ? "date" : undefined}
+      onClick={() => onSelectDate(date)}
+      className={cn(
+        "bg-card flex min-h-16 flex-col items-center justify-between rounded-xl border p-1.5 text-sm transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+        date === today && "border-primary",
+        selected && "bg-secondary border-primary-ink",
+      )}
+    >
+      <span className="font-semibold">{Number(date.slice(-2))}</span>
+      <span
+        className={cn(
+          "grid min-w-5 place-items-center rounded-full px-1 text-[0.68rem] font-bold",
+          mealCount ? "bg-primary text-primary-foreground" : "text-muted-foreground/50",
+        )}
+      >
+        {mealCount || "·"}
+      </span>
+    </button>
   );
 }
 

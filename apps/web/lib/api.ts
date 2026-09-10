@@ -4,6 +4,8 @@
  * The frontend addresses media and every other resource by application-level
  * ID through this base URL. It must never build fake-GCS URLs or object paths.
  */
+import type { DailySummaryResponse } from "./daily-summary.mts";
+
 const baseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:18080";
 
@@ -196,6 +198,19 @@ export type MealDay = {
   date: string;
   meals: Meal[];
 };
+
+/** The shared aggregate used by the trophy row and calendar view. */
+export function fetchDailySummary(
+  start: string,
+  end: string,
+  signal?: AbortSignal,
+): Promise<DailySummaryResponse> {
+  const query = new URLSearchParams({ start, end });
+  return apiFetch<DailySummaryResponse>(
+    `/api/v1/meals/daily-summary?${query.toString()}`,
+    { signal },
+  );
+}
 
 const mealTypeLabels: Record<string, string> = {
   breakfast: "早餐",
