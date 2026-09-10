@@ -1,5 +1,14 @@
 import { isTodayDate } from "./date.mts";
 
+/** Only the latest non-aborted request may update page state. */
+export function isCurrentAsyncRequest(
+  signal: AbortSignal | undefined,
+  requestKey: string,
+  activeRequestKey: string | null,
+): boolean {
+  return signal?.aborted !== true && requestKey === activeRequestKey;
+}
+
 /**
  * Resolves the Today page heading and empty-state date condition.
  *
