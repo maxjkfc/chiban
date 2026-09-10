@@ -8,7 +8,7 @@ import {
   TrophyIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -35,7 +35,10 @@ import {
   type DailySummaryResponse,
 } from "@/lib/daily-summary.mts";
 import { dateInTimezone } from "@/lib/date.mts";
-import { isTodaySelection } from "@/lib/today-page-state.mts";
+import {
+  isCurrentAsyncRequest,
+  isTodaySelection,
+} from "@/lib/today-page-state.mts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -52,28 +55,50 @@ export default function TodayPage() {
   // null means "whatever today is for me"; the backend answers with the date.
   const [date, setDate] = useState<string | null>(null);
   const [timezone, setTimezone] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [mealError, setMealError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [summary, setSummary] = useState<DailySummaryResponse | null>(null);
   const [summaryKey, setSummaryKey] = useState<string | null>(null);
   const [summaryFailedKey, setSummaryFailedKey] = useState<string | null>(null);
   const [view, setView] = useState<"day" | "calendar">("day");
   const [calendarMonth, setCalendarMonth] = useState<string | null>(null);
+  const mealRequestKeyRef = useRef<string | null>(null);
+  const summaryRequestKeyRef = useRef<string | null>(null);
 
   const load = useCallback((requested: string | null, signal?: AbortSignal) => {
+    const requestKey = requested ?? "__today__";
     const query = requested ? `?date=${requested}` : "";
     return apiFetch<MealDay>(`/api/v1/meals${query}`, { signal })
       .then((loaded) => {
+        if (
+          !isCurrentAsyncRequest(
+            signal,
+            requestKey,
+            mealRequestKeyRef.current,
+          )
+        ) {
+          return;
+        }
         setDay(loaded);
-        setError(null);
+        setMealError(null);
       })
       .catch((caught: unknown) => {
-        if (signal?.aborted) return;
-        setError("讀取失敗，請重新整理");
+        if (
+          !isCurrentAsyncRequest(
+            signal,
+            requestKey,
+            mealRequestKeyRef.current,
+          )
+        ) {
+          return;
+        }
+        setMealError("讀取失敗，請重新整理");
         throw caught;
       });
   }, []);
 
   useEffect(() => {
+    mealRequestKeyRef.current = date ?? "__today__";
     const controller = new AbortController();
     load(date, controller.signal).catch(() => {});
     return () => controller.abort();
@@ -84,9 +109,15 @@ export default function TodayPage() {
     apiFetch<Profile>("/api/v1/me/profile", {
       signal: controller.signal,
     })
-      .then((profile) => setTimezone(profile.timezone))
+      .then((profile) => {
+        if (controller.signal.aborted) return;
+        setTimezone(profile.timezone);
+        setProfileError(null);
+      })
       .catch(() => {
-        if (!controller.signal.aborted) setError("讀取失敗，請重新整理");
+        if (!controller.signal.aborted) {
+          setProfileError("個人設定讀取失敗，里程碑暫時無法顯示");
+        }
       });
     return () => controller.abort();
   }, []);
@@ -108,22 +139,41 @@ export default function TodayPage() {
   const summaryLoading = currentSummaryKey !== null &&
     summaryKey !== currentSummaryKey && summaryFailedKey !== currentSummaryKey;
   const visibleSummary = summaryKey === currentSummaryKey ? summary : null;
+  const summaryError =
+    currentSummaryKey !== null && summaryFailedKey === currentSummaryKey
+      ? "里程碑資料讀取失敗，請重新整理"
+      : null;
 
   useEffect(() => {
+    summaryRequestKeyRef.current = currentSummaryKey;
     if (!summaryStart || !summaryEnd || !currentSummaryKey) return;
 
+    const requestKey = currentSummaryKey;
     const controller = new AbortController();
     fetchDailySummary(summaryStart, summaryEnd, controller.signal)
       .then((loaded) => {
+        if (
+          !isCurrentAsyncRequest(
+            controller.signal,
+            requestKey,
+            summaryRequestKeyRef.current,
+          )
+        ) {
+          return;
+        }
         setSummary(loaded);
-        setSummaryKey(currentSummaryKey);
+        setSummaryKey(requestKey);
         setSummaryFailedKey(null);
-        setError(null);
       })
       .catch(() => {
-        if (!controller.signal.aborted) {
-          setSummaryFailedKey(currentSummaryKey);
-          setError("里程碑資料讀取失敗，請重新整理");
+        if (
+          isCurrentAsyncRequest(
+            controller.signal,
+            requestKey,
+            summaryRequestKeyRef.current,
+          )
+        ) {
+          setSummaryFailedKey(requestKey);
         }
       });
 
@@ -199,7 +249,9 @@ export default function TodayPage() {
           </div>
 
           {view === "day" ? (
-            summaryLoading && visibleSummary === null ? (
+            summaryError ? (
+              <Message tone="error">{summaryError}</Message>
+            ) : summaryLoading && visibleSummary === null ? (
               <Message>里程碑載入中…</Message>
             ) : (
               <TrophyRail
@@ -248,22 +300,29 @@ export default function TodayPage() {
         </div>
       ) : null}
 
-      {error ? <Message tone="error">{error}</Message> : null}
+      {mealError ? <Message tone="error">{mealError}</Message> : null}
+      {profileError ? <Message tone="error">{profileError}</Message> : null}
 
       {view === "calendar" && activeCalendarMonth ? (
-        summaryLoading && visibleSummary === null ? (
-          <Message>月曆載入中…</Message>
+        summaryError ? (
+          <Message tone="error">{summaryError}</Message>
         ) : (
-          <MonthCalendar
-            month={activeCalendarMonth}
-            today={localToday}
-            selectedDate={shown}
-            days={summaryByDate}
-            onChangeMonth={(amount) => setCalendarMonth(shiftMonth(activeCalendarMonth, amount))}
-            onSelectDate={selectCalendarDate}
-          />
+          <div
+            aria-busy={summaryLoading || undefined}
+            className="flex flex-col gap-2"
+          >
+            <MonthCalendar
+              month={activeCalendarMonth}
+              today={localToday}
+              selectedDate={shown}
+              days={summaryByDate}
+              onChangeMonth={(amount) => setCalendarMonth(shiftMonth(activeCalendarMonth, amount))}
+              onSelectDate={selectCalendarDate}
+            />
+            {summaryLoading ? <Message>月曆載入中…</Message> : null}
+          </div>
         )
-      ) : day === null ? (
+      ) : mealError ? null : day === null ? (
         <Message>載入中…</Message>
       ) : meals.length === 0 ? (
         <div className="flex flex-col items-start gap-4 pt-2">
