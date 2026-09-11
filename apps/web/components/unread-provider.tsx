@@ -17,7 +17,7 @@ import {
   GROUP_MESSAGE_EVENT,
   recordGlobalGroupMessage,
   recordGroupMessage,
-  replaceGroupInUnreadState,
+  updateGroupPinnedInUnreadState,
   unreadGroupRevision,
   unreadRefreshRevision,
   type GroupMessageEventDetail,
@@ -29,7 +29,7 @@ export type UnreadContextValue = {
   error: boolean;
   refreshGroups: (signal?: AbortSignal) => Promise<void>;
   addGroup: (group: Group) => void;
-  replaceGroup: (group: Group) => void;
+  setGroupPinned: (groupId: string, pinned: boolean) => void;
   /** Reflect a realtime message before a best-effort mark-read request. */
   noteGroupMessage: (groupId: string, isOwnMessage?: boolean) => void;
   markGroupRead: (groupId: string, messageId: string) => Promise<boolean>;
@@ -140,8 +140,10 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
     setState((current) => addGroupToUnreadState(current, group));
   }, []);
 
-  const replaceGroup = useCallback((group: Group) => {
-    setState((current) => replaceGroupInUnreadState(current, group));
+  const setGroupPinned = useCallback((groupId: string, pinned: boolean) => {
+    setState((current) =>
+      updateGroupPinnedInUnreadState(current, groupId, pinned),
+    );
   }, []);
 
   const noteGroupMessage = useCallback(
@@ -183,7 +185,7 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
       error: state.error,
       refreshGroups,
       addGroup,
-      replaceGroup,
+      setGroupPinned,
       noteGroupMessage,
       markGroupRead,
     }),
@@ -192,7 +194,7 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
       state.error,
       refreshGroups,
       addGroup,
-      replaceGroup,
+      setGroupPinned,
       noteGroupMessage,
       markGroupRead,
     ],

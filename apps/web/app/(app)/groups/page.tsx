@@ -7,7 +7,8 @@ import {
   XIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Dialog } from "radix-ui";
+import { useState } from "react";
 
 import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
 import { UnreadBadge } from "@/components/unread-badge";
@@ -32,38 +33,22 @@ export default function GroupsPage() {
     groups,
     error: groupsError,
     addGroup,
-    replaceGroup,
+    setGroupPinned,
   } = useUnreadGroups();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pinningGroupId, setPinningGroupId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const createTriggerRef = useRef<HTMLButtonElement>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
 
-  function closeCreateModal() {
-    setShowCreateModal(false);
-    setError(null);
-    createTriggerRef.current?.focus();
-  }
-
-  useEffect(() => {
-    if (!showCreateModal) return;
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") closeCreateModal();
+  function handleCreateModalChange(open: boolean, force = false) {
+    if (!open && submitting && !force) return;
+    setShowCreateModal(open);
+    if (!open) {
+      setName("");
+      setError(null);
     }
-
-    document.addEventListener("keydown", handleEscape);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    nameInputRef.current?.focus();
-    return () => {
-      document.removeEventListener("keydown", handleEscape);
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [showCreateModal]);
+  }
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -76,9 +61,7 @@ export default function GroupsPage() {
         body: { name },
       });
       addGroup(created);
-      setName("");
-      setShowCreateModal(false);
-      createTriggerRef.current?.focus();
+      handleCreateModalChange(false, true);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
@@ -92,9 +75,8 @@ export default function GroupsPage() {
 
   async function handlePinToggle(group: Group) {
     const nextPinned = group.pinned !== true;
-    const updated = { ...group, pinned: nextPinned };
     setError(null);
-    replaceGroup(updated);
+    setGroupPinned(group.id, nextPinned);
     setPinningGroupId(group.id);
 
     try {
@@ -104,7 +86,7 @@ export default function GroupsPage() {
         await unpinGroup(group.id);
       }
     } catch (caught) {
-      replaceGroup(group);
+      setGroupPinned(group.id, !nextPinned);
       setError(
         caught instanceof ApiRequestError
           ? caught.message
@@ -118,7 +100,8 @@ export default function GroupsPage() {
   const quickGroups = groups ? pinnedGroups(groups) : [];
 
   return (
-    <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
+    <Dialog.Root open={showCreateModal} onOpenChange={handleCreateModalChange}>
+      <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
       <header className="flex items-start gap-4">
         <div className="flex flex-1 flex-col gap-1">
           <h1>群組</h1>
@@ -126,19 +109,20 @@ export default function GroupsPage() {
             只有被邀請的人看得到裡面的餐。
           </p>
         </div>
-        <Button
-          ref={createTriggerRef}
-          variant="outline"
-          size="icon"
-          aria-label="建立群組"
-          title="建立群組"
-          onClick={() => {
-            setError(null);
-            setShowCreateModal(true);
-          }}
-        >
-          <PlusIcon aria-hidden />
-        </Button>
+        <Dialog.Trigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="建立群組"
+            aria-haspopup="dialog"
+            aria-expanded={showCreateModal}
+            aria-controls="create-group-dialog"
+            title="建立群組"
+            onClick={() => setError(null)}
+          >
+            <PlusIcon aria-hidden />
+          </Button>
+        </Dialog.Trigger>
       </header>
 
       {groups === null ? (
@@ -236,63 +220,54 @@ export default function GroupsPage() {
       )}
 
       {error && groups !== null ? <Message tone="error">{error}</Message> : null}
+      </main>
 
-      {showCreateModal ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
-          <button
-            type="button"
-            aria-label="關閉建立群組視窗"
-            className="absolute inset-0 cursor-default bg-black/30"
-            onClick={closeCreateModal}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-group-title"
-            className="bg-card relative w-full max-w-md rounded-2xl border p-5 shadow-2xl"
-          >
-            <div className="mb-5 flex items-start gap-3">
-              <div className="flex-1">
-                <h2 id="create-group-title" className="text-xl">
-                  建立群組
-                </h2>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  建立後就可以邀請朋友一起記錄。
-                </p>
-              </div>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/30" />
+        <Dialog.Content
+          id="create-group-dialog"
+          className="bg-card fixed inset-x-4 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-auto max-w-md -translate-y-1/2 overflow-y-auto rounded-2xl border p-5 shadow-2xl sm:left-1/2 sm:right-auto sm:w-full sm:-translate-x-1/2"
+        >
+          <div className="mb-5 flex items-start gap-3">
+            <div className="flex-1">
+              <Dialog.Title className="text-xl">建立群組</Dialog.Title>
+              <Dialog.Description className="text-muted-foreground mt-1 text-sm">
+                建立後就可以邀請朋友一起記錄。
+              </Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
                 aria-label="關閉建立群組視窗"
-                onClick={closeCreateModal}
+                disabled={submitting}
               >
                 <XIcon aria-hidden />
               </Button>
-            </div>
-            <form onSubmit={handleCreate} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="group-name">群組名稱</Label>
-                <Input
-                  ref={nameInputRef}
-                  id="group-name"
-                  variant="ruled"
-                  required
-                  maxLength={50}
-                  placeholder="例如：週五宵夜"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </div>
-              {error ? <Message tone="error">{error}</Message> : null}
-              <Button type="submit" loading={submitting}>
-                <PlusIcon aria-hidden />
-                {submitting ? "建立中…" : "建立群組"}
-              </Button>
-            </form>
+            </Dialog.Close>
           </div>
-        </div>
-      ) : null}
-    </main>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="group-name">群組名稱</Label>
+              <Input
+                id="group-name"
+                variant="ruled"
+                required
+                maxLength={50}
+                placeholder="例如：週五宵夜"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            {error ? <Message tone="error">{error}</Message> : null}
+            <Button type="submit" loading={submitting} disabled={submitting}>
+              <PlusIcon aria-hidden />
+              {submitting ? "建立中…" : "建立群組"}
+            </Button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

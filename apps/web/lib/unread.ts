@@ -261,27 +261,32 @@ export function addGroupToUnreadState(
   };
 }
 
-/** Applies a local group mutation without losing unread or realtime state. */
-export function replaceGroupInUnreadState(
+/** Updates only the pin flag from the provider's current group snapshot. */
+export function updateGroupPinnedInUnreadState(
   state: UnreadState,
-  group: Group,
+  groupId: string,
+  pinned: boolean,
 ): UnreadState {
+  const current =
+    state.overrides[groupId]?.group ??
+    state.groups?.find((group) => group.id === groupId);
+  if (!current || current.pinned === pinned) return state;
+
+  const updated: Group = { ...current, pinned };
   const revision = state.revision + 1;
   return {
     ...state,
-    groups: state.groups
-      ? state.groups.map((current) =>
-          current.id === group.id ? group : current,
-        )
-      : state.groups,
+    groups: state.groups?.map((group) =>
+      group.id === groupId ? updated : group,
+    ) ?? state.groups,
     revision,
     groupRevisions: {
       ...state.groupRevisions,
-      [group.id]: (state.groupRevisions[group.id] ?? 0) + 1,
+      [groupId]: (state.groupRevisions[groupId] ?? 0) + 1,
     },
     overrides: {
       ...state.overrides,
-      [group.id]: { group, revision },
+      [groupId]: { group: updated, revision },
     },
     pendingUnread: state.pendingUnread,
   };
