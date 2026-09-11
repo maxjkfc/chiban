@@ -13,12 +13,22 @@ export type DateRange = {
   end: string;
 };
 
+/** Keep client navigation aligned with the API's inclusive range limit. */
+export const MAX_DAILY_SUMMARY_RANGE_DAYS = 92;
+export const TROPHY_WINDOW_RADIUS_DAYS = 3;
+
 function dateAtUTC(date: string): Date {
   return new Date(`${date}T12:00:00Z`);
 }
 
 function dateString(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function shiftCalendarDate(date: string, amount: number): string {
+  const shifted = dateAtUTC(date);
+  shifted.setUTCDate(shifted.getUTCDate() + amount);
+  return dateString(shifted);
 }
 
 /** Caps a day's count at the three trophy slots shown in the UI. */
@@ -30,11 +40,42 @@ export function trophyProgress(mealCount: number): 0 | 1 | 2 | 3 {
 
 /** Returns the inclusive seven-day range centered on the user's local today. */
 export function weekRange(today: string): DateRange {
-  const start = dateAtUTC(today);
-  start.setUTCDate(start.getUTCDate() - 3);
-  const end = dateAtUTC(today);
-  end.setUTCDate(end.getUTCDate() + 3);
-  return { start: dateString(start), end: dateString(end) };
+  const start = shiftCalendarDate(today, -TROPHY_WINDOW_RADIUS_DAYS);
+  const end = shiftCalendarDate(today, TROPHY_WINDOW_RADIUS_DAYS);
+  return { start, end };
+}
+
+/**
+ * Returns the dates that can be used as the trophy anchor. The boundary keeps
+ * the rail from navigating beyond the same 92-day history envelope used by
+ * daily-summary. The seven-day request itself remains well below the API cap.
+ */
+export function trophyAnchorBounds(today: string): DateRange {
+  return {
+    start: shiftCalendarDate(today, -MAX_DAILY_SUMMARY_RANGE_DAYS),
+    end: shiftCalendarDate(today, MAX_DAILY_SUMMARY_RANGE_DAYS),
+  };
+}
+
+export function isTrophyAnchorInBounds(anchor: string, today: string): boolean {
+  const bounds = trophyAnchorBounds(today);
+  return anchor >= bounds.start && anchor <= bounds.end;
+}
+
+export function canShiftTrophyAnchor(
+  anchor: string,
+  amount: number,
+  today: string,
+): boolean {
+  return isTrophyAnchorInBounds(shiftCalendarDate(anchor, amount), today);
+}
+
+export function isDailySummaryRangeWithinLimit(range: DateRange): boolean {
+  const start = dateAtUTC(range.start);
+  const end = dateAtUTC(range.end);
+  return end >= start &&
+    Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1 <=
+      MAX_DAILY_SUMMARY_RANGE_DAYS;
 }
 
 /** Expands an inclusive date range for rendering a fixed row or grid. */
