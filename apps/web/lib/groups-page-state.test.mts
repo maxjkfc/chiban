@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import * as React from "react";
+import { JSDOM } from "jsdom";
 
 import { pinGroup, unpinGroup, type Group } from "./api.ts";
 import { pinnedGroups, replaceGroup } from "./groups-page-state.mts";
@@ -10,10 +11,71 @@ import {
   updateGroupPinnedInUnreadState,
 } from "./unread.ts";
 
-const groupsPageSource = readFileSync(
-  new URL("../app/(app)/groups/page.tsx", import.meta.url),
-  "utf8",
+const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+  url: "http://localhost:3000/groups",
+});
+for (const property of [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "HTMLInputElement",
+  "HTMLButtonElement",
+  "Node",
+  "NodeFilter",
+  "MutationObserver",
+  "getComputedStyle",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "DOMException",
+  "Event",
+  "CustomEvent",
+  "PointerEvent",
+] as const) {
+  Object.defineProperty(globalThis, property, {
+    configurable: true,
+    value: dom.window[property],
+  });
+}
+
+const { cleanup, render, screen, waitFor } = await import(
+  "@testing-library/react"
 );
+const { default: GroupsPage } = await import("../app/(app)/groups/page.tsx");
+const { UnreadProvider } = await import("../components/unread-provider.tsx");
+const { default: userEvent } = await import("@testing-library/user-event");
+
+function renderGroupsPage() {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/groups")) {
+      return new Response(JSON.stringify([]), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.endsWith("/api/v1/auth/me")) {
+      return new Response(
+        JSON.stringify({ id: "user-1", email: "user@example.com" }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+    return new Response(null, { status: 404 });
+  };
+  const result = render(
+    React.createElement(
+      UnreadProvider,
+      null,
+      React.createElement(GroupsPage),
+    ),
+  );
+  return {
+    ...result,
+    restoreFetch: () => {
+      globalThis.fetch = originalFetch;
+    },
+  };
+}
 
 function group(id: string, pinned: boolean): Group {
   return {
@@ -74,11 +136,69 @@ test("pin rollback preserves a realtime unread update received while the request
   assert.equal(rolledBack.groups?.[0].has_unread, true);
 });
 
-test("create-group modal delegates keyboard focus behavior to Radix Dialog", () => {
-  assert.match(groupsPageSource, /<Dialog\.Trigger asChild>/);
-  assert.match(groupsPageSource, /<Dialog\.Content/);
-  assert.match(groupsPageSource, /<Dialog\.Close asChild>/);
-  assert.doesNotMatch(groupsPageSource, /addEventListener\("keydown"/);
+test("create-group dialog traps forward and backward keyboard focus", async () => {
+  const rendered = renderGroupsPage();
+  const user = userEvent.setup();
+
+  try {
+    const trigger = screen.getByRole("button", { name: "建立群組" });
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "建立群組" });
+
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab();
+      assert.ok(dialog.contains(document.activeElement));
+    }
+    for (let index = 0; index < 4; index += 1) {
+      await user.tab({ shift: true });
+      assert.ok(dialog.contains(document.activeElement));
+    }
+  } finally {
+    rendered.unmount();
+    rendered.restoreFetch();
+    cleanup();
+  }
+});
+
+test("create-group dialog isolates the groups page from interaction", async () => {
+  const rendered = renderGroupsPage();
+  const user = userEvent.setup();
+
+  try {
+    await user.click(screen.getByRole("button", { name: "建立群組" }));
+    await screen.findByRole("dialog", { name: "建立群組" });
+
+    const background = document.querySelector("main")?.closest(
+      '[aria-hidden="true"]',
+    );
+    assert.ok(background?.contains(document.querySelector("main")));
+    assert.equal(background?.getAttribute("data-aria-hidden"), "true");
+  } finally {
+    rendered.unmount();
+    rendered.restoreFetch();
+    cleanup();
+  }
+});
+
+test("Escape closes create-group dialog and restores focus to its trigger", async () => {
+  const rendered = renderGroupsPage();
+  const user = userEvent.setup();
+
+  try {
+    const trigger = screen.getByRole("button", { name: "建立群組" });
+    await user.click(trigger);
+    await screen.findByRole("dialog", { name: "建立群組" });
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      assert.equal(screen.queryByRole("dialog", { name: "建立群組" }), null);
+    });
+    assert.equal(document.activeElement, trigger);
+  } finally {
+    rendered.unmount();
+    rendered.restoreFetch();
+    cleanup();
+  }
 });
 
 test("pin and unpin use the persisted group pin endpoints", async () => {
