@@ -96,7 +96,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("migrate: %v", err)
 	}
 	if _, err := db.ExecContext(t.Context(),
-		`TRUNCATE users, groups, group_members, group_invites RESTART IDENTITY CASCADE`,
+		`TRUNCATE users, groups, group_members, group_invites, group_pins RESTART IDENTITY CASCADE`,
 	); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

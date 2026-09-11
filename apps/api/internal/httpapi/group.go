@@ -30,6 +30,11 @@ type groupResponse struct {
 	// HasUnread mirrors UnreadCount as a boolean, since the nav badge only
 	// needs "is there anything new", not how much.
 	HasUnread bool `json:"has_unread"`
+	// Pinned is the caller's own choice to keep this group at the top of
+	// their list, persisted per-user on the backend so it is the same on
+	// every device they log into. Always populated by List/Get; false for
+	// endpoints that do not look it up (Create, Join).
+	Pinned bool `json:"pinned"`
 }
 
 type memberResponse struct {
@@ -53,6 +58,7 @@ func newGroupResponse(g group.Group, userID uuid.UUID) groupResponse {
 		IsOwner:     g.OwnerID == userID,
 		UnreadCount: g.UnreadCount,
 		HasUnread:   g.UnreadCount > 0,
+		Pinned:      g.Pinned,
 	}
 }
 
@@ -287,6 +293,38 @@ func markGroupReadHandler(d Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, newGroupResponse(g, userID))
+	}
+}
+
+func pinGroupHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID, ok := pathUUID(w, r, "group_id")
+		if !ok {
+			return
+		}
+
+		userID := auth.UserFromContext(r.Context()).ID
+		if err := d.Group.Pin(r.Context(), userID, groupID); err != nil {
+			writeGroupError(w, d, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func unpinGroupHandler(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID, ok := pathUUID(w, r, "group_id")
+		if !ok {
+			return
+		}
+
+		userID := auth.UserFromContext(r.Context()).ID
+		if err := d.Group.Unpin(r.Context(), userID, groupID); err != nil {
+			writeGroupError(w, d, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

@@ -70,6 +70,10 @@ type Group struct {
 	// UnreadCount is how many messages, including tombstones, sit after
 	// ReadCursor. Populated by ListForUser; zero value elsewhere.
 	UnreadCount int
+	// Pinned is the caller's own choice to keep this group at the top of
+	// their list. Per-user, not a group property: never filled for anyone
+	// but the requester.
+	Pinned bool
 }
 
 type Member struct {
@@ -387,6 +391,26 @@ func (s *Service) MarkRead(ctx context.Context, userID, groupID, messageID uuid.
 // Re-deriving that here would be the same two facts asked a second time.
 func (s *Service) AdvanceOwnCursor(ctx context.Context, userID, groupID, messageID uuid.UUID, messageCreatedAt time.Time) error {
 	return s.store.advanceReadCursor(ctx, groupID, userID, messageID, messageCreatedAt)
+}
+
+// Pin keeps a group at the top of the caller's own list, on every device.
+//
+// Only a member may pin a group they belong to: findForMember doubles as the
+// authorization check and turns a non-member's attempt into ErrNotMember,
+// the same answer a non-member gets from every other group read. Pinning an
+// already-pinned group is a no-op, not an error.
+func (s *Service) Pin(ctx context.Context, userID, groupID uuid.UUID) error {
+	if _, err := s.store.findForMember(ctx, groupID, userID); err != nil {
+		return err
+	}
+	return s.store.pinGroup(ctx, userID, groupID, s.now())
+}
+
+// Unpin removes the caller's own pin. Unpinning a group that was never
+// pinned, or one the caller has since left, is a no-op: the end state the
+// caller wants — this group not pinned — already holds.
+func (s *Service) Unpin(ctx context.Context, userID, groupID uuid.UUID) error {
+	return s.store.unpinGroup(ctx, userID, groupID)
 }
 
 // newInviteCode returns a code that is unguessable but still readable enough
