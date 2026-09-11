@@ -8,7 +8,13 @@ import {
   TrophyIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+} from "react";
 
 import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -26,9 +32,13 @@ import {
 } from "@/lib/api";
 import {
   calendarCells,
+  canShiftTrophyAnchor,
+  clampDateRangeToBounds,
   dateRangeDates,
+  isDailySummaryRangeWithinLimit,
   monthRange,
   shiftMonth,
+  trophyAnchorBounds,
   trophyProgress,
   weekRange,
   type DailySummaryDay,
@@ -125,11 +135,17 @@ export default function TodayPage() {
   const localToday = timezone
     ? dateInTimezone(new Date(), timezone)
     : day?.date ?? null;
+  const selectedDate = date ?? localToday;
+  const trophyBounds = localToday ? trophyAnchorBounds(localToday) : null;
   const activeCalendarMonth = calendarMonth ?? localToday?.slice(0, 7) ?? null;
-  const summaryRange = timezone
+  const requestedSummaryRange = timezone
     ? view === "calendar"
       ? activeCalendarMonth ? monthRange(activeCalendarMonth) : null
-      : weekRange(dateInTimezone(new Date(), timezone))
+      : selectedDate ? weekRange(selectedDate) : null
+    : null;
+  const summaryRange = requestedSummaryRange &&
+    isDailySummaryRangeWithinLimit(requestedSummaryRange)
+    ? requestedSummaryRange
     : null;
   const summaryStart = summaryRange?.start ?? null;
   const summaryEnd = summaryRange?.end ?? null;
@@ -180,20 +196,46 @@ export default function TodayPage() {
     return () => controller.abort();
   }, [currentSummaryKey, summaryEnd, summaryStart]);
 
-  const shown = day?.date ?? null;
   const isToday = isTodaySelection(date, timezone);
   const summaryByDate = new Map(
     (visibleSummary?.days ?? []).map((summaryDay) => [summaryDay.date, summaryDay]),
   );
-  const trophyDates = localToday
-    ? dateRangeDates(weekRange(localToday))
+  const trophyDates = selectedDate && trophyBounds
+    ? dateRangeDates(clampDateRangeToBounds(weekRange(selectedDate), trophyBounds))
     : [];
+  const selectDate = (next: string | null) => {
+    let normalized = next;
+    if (normalized && localToday) {
+      const bounds = trophyAnchorBounds(localToday);
+      normalized = normalized < bounds.start
+        ? bounds.start
+        : normalized > bounds.end
+          ? bounds.end
+          : normalized;
+    }
+    if (normalized !== selectedDate) {
+      setDay(null);
+    }
+    if (!normalized || !localToday) {
+      setDate(normalized);
+      return;
+    }
+    setDate(normalized);
+  };
+  const shiftSelectedDate = (amount: number) => {
+    if (!selectedDate) return;
+    if (
+      localToday &&
+      !canShiftTrophyAnchor(selectedDate, amount, localToday)
+    ) return;
+    selectDate(shiftDate(selectedDate, amount));
+  };
   const openCalendar = () => {
-    setCalendarMonth((shown ?? localToday)?.slice(0, 7) ?? null);
+    setCalendarMonth(selectedDate?.slice(0, 7) ?? null);
     setView("calendar");
   };
   const selectCalendarDate = (selectedDate: string) => {
-    setDate(selectedDate);
+    selectDate(selectedDate);
     setView("day");
   };
 
@@ -207,7 +249,7 @@ export default function TodayPage() {
       <header className="flex items-end justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <span className="text-primary-ink text-xs font-bold tracking-[0.14em]">
-            {shown ? shown.replaceAll("-", " / ") : " "}
+            {selectedDate ? selectedDate.replaceAll("-", " / ") : " "}
           </span>
           <h1>{isToday ? "今日" : "那一天"}</h1>
         </div>
@@ -256,9 +298,19 @@ export default function TodayPage() {
             ) : (
               <TrophyRail
                 dates={trophyDates}
-                today={localToday}
+                selectedDate={selectedDate}
                 days={summaryByDate}
-                onSelectDate={(selectedDate) => setDate(selectedDate)}
+                onSelectDate={selectDate}
+                onShiftDate={(amount) => {
+                  if (
+                    selectedDate &&
+                    (!localToday || canShiftTrophyAnchor(selectedDate, amount, localToday))
+                  ) {
+                    selectDate(shiftDate(selectedDate, amount));
+                  }
+                }}
+                minDate={trophyBounds?.start ?? null}
+                maxDate={trophyBounds?.end ?? null}
               />
             )
           ) : null}
@@ -271,29 +323,39 @@ export default function TodayPage() {
             variant="outline"
             size="icon"
             aria-label="前一天"
-            onClick={() => setDate(shiftDate(shown ?? "", -1))}
-            disabled={!shown}
+            onClick={() => shiftSelectedDate(-1)}
+            disabled={
+              !selectedDate ||
+              (localToday !== null &&
+                !canShiftTrophyAnchor(selectedDate, -1, localToday))
+            }
           >
             <ChevronLeftIcon aria-hidden />
           </Button>
           <input
             type="date"
             aria-label="選擇日期"
-            value={shown ?? ""}
-            onChange={(event) => setDate(event.target.value || null)}
+            value={selectedDate ?? ""}
+            min={trophyBounds?.start ?? undefined}
+            max={trophyBounds?.end ?? undefined}
+            onChange={(event) => selectDate(event.target.value || null)}
             className="border-input bg-card h-11 flex-1 rounded-lg border px-3 text-sm"
           />
           <Button
             variant="outline"
             size="icon"
             aria-label="後一天"
-            onClick={() => setDate(shiftDate(shown ?? "", 1))}
-            disabled={!shown}
+            onClick={() => shiftSelectedDate(1)}
+            disabled={
+              !selectedDate ||
+              (localToday !== null &&
+                !canShiftTrophyAnchor(selectedDate, 1, localToday))
+            }
           >
             <ChevronRightIcon aria-hidden />
           </Button>
           {!isToday ? (
-            <Button variant="ghost" onClick={() => setDate(null)}>
+            <Button variant="ghost" onClick={() => selectDate(null)}>
               回到今天
             </Button>
           ) : null}
@@ -314,7 +376,7 @@ export default function TodayPage() {
             <MonthCalendar
               month={activeCalendarMonth}
               today={localToday}
-              selectedDate={shown}
+              selectedDate={selectedDate}
               days={summaryByDate}
               onChangeMonth={(amount) => setCalendarMonth(shiftMonth(activeCalendarMonth, amount))}
               onSelectDate={selectCalendarDate}
@@ -390,17 +452,57 @@ function formatMonth(month: string): string {
 
 function TrophyRail({
   dates,
-  today,
+  selectedDate,
   days,
   onSelectDate,
+  onShiftDate,
+  minDate,
+  maxDate,
 }: {
   dates: string[];
-  today: string;
+  selectedDate: string | null;
   days: ReadonlyMap<string, DailySummaryDay>;
   onSelectDate: (date: string) => void;
+  onShiftDate: (amount: number) => void;
+  minDate: string | null;
+  maxDate: string | null;
 }) {
+  const pointerStart = useRef<{ id: number; x: number } | null>(null);
+  const suppressClick = useRef(false);
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    pointerStart.current = { id: event.pointerId, x: event.clientX };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start || start.id !== event.pointerId) return;
+    const delta = event.clientX - start.x;
+    if (Math.abs(delta) < 40) return;
+    suppressClick.current = true;
+    onShiftDate(delta < 0 ? 1 : -1);
+  };
+  const handlePointerCancel = () => {
+    pointerStart.current = null;
+  };
+
   return (
-    <div className="grid grid-cols-7 gap-1" data-testid="trophy-rail">
+    <div
+      aria-label="七天里程碑，可左右滑動"
+      className="grid grid-cols-7 gap-1 [touch-action:pan-y]"
+      data-anchor-date={selectedDate ?? undefined}
+      data-end-date={dates.at(-1) ?? undefined}
+      data-max-date={maxDate ?? undefined}
+      data-min-date={minDate ?? undefined}
+      data-start-date={dates[0]}
+      data-testid="trophy-rail"
+      onPointerCancel={handlePointerCancel}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      role="group"
+    >
       {dates.map((date) => {
         const mealCount = days.get(date)?.meal_count ?? 0;
         const progress = trophyProgress(mealCount);
@@ -410,11 +512,17 @@ function TrophyRail({
             type="button"
             data-progress={progress}
             aria-label={`${formatDayNumber(date)}，${progress}/3，${mealCount} 筆紀錄`}
-            aria-current={date === today ? "date" : undefined}
-            onClick={() => onSelectDate(date)}
+            aria-current={date === selectedDate ? "date" : undefined}
+            onClick={() => {
+              if (suppressClick.current) {
+                suppressClick.current = false;
+                return;
+              }
+              onSelectDate(date);
+            }}
             className={cn(
               "flex min-w-0 flex-col items-center gap-1 rounded-xl px-0.5 py-1.5 text-xs transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
-              date === today && "bg-secondary font-bold",
+              date === selectedDate && "bg-secondary font-bold ring-2 ring-primary/30",
             )}
           >
             <span className="text-muted-foreground text-[0.68rem] leading-none">
