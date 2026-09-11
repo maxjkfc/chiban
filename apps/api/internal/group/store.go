@@ -50,6 +50,13 @@ func (s *store) addMember(ctx context.Context, groupID, userID uuid.UUID, role s
 }
 
 func (s *store) removeMember(ctx context.Context, groupID, userID uuid.UUID) error {
+	// A pin is a member's own bookmark on the group; it has no meaning once
+	// they are no longer in it, and leaving-then-rejoining should not
+	// silently resurrect a stale pin from a previous membership.
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM group_pins WHERE group_id = $1 AND user_id = $2`, groupID, userID); err != nil {
+		return fmt.Errorf("group: remove member: clear pin: %w", err)
+	}
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM group_members WHERE group_id = $1 AND user_id = $2`, groupID, userID)
 	if err != nil {
@@ -66,11 +73,13 @@ func (s *store) findForMember(ctx context.Context, groupID, userID uuid.UUID) (G
 	var cursorAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
 		SELECT g.id, g.name, g.owner_id, m.role, g.created_at,
-		       m.last_read_message_id, m.last_read_message_created_at
+		       m.last_read_message_id, m.last_read_message_created_at,
+		       gp.user_id IS NOT NULL
 		FROM groups g
 		JOIN group_members m ON m.group_id = g.id AND m.user_id = $2
+		LEFT JOIN group_pins gp ON gp.group_id = g.id AND gp.user_id = $2
 		WHERE g.id = $1
-	`, groupID, userID).Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt)
+	`, groupID, userID).Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt, &g.Pinned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Group{}, ErrNotMember
 	}
@@ -86,9 +95,11 @@ func (s *store) findForMember(ctx context.Context, groupID, userID uuid.UUID) (G
 func (s *store) listForUser(ctx context.Context, userID uuid.UUID) ([]Group, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT g.id, g.name, g.owner_id, m.role, g.created_at,
-		       m.last_read_message_id, m.last_read_message_created_at
+		       m.last_read_message_id, m.last_read_message_created_at,
+		       gp.user_id IS NOT NULL
 		FROM groups g
 		JOIN group_members m ON m.group_id = g.id
+		LEFT JOIN group_pins gp ON gp.group_id = g.id AND gp.user_id = m.user_id
 		WHERE m.user_id = $1
 		ORDER BY g.created_at
 	`, userID)
@@ -102,7 +113,7 @@ func (s *store) listForUser(ctx context.Context, userID uuid.UUID) ([]Group, err
 		var g Group
 		var cursorID uuid.NullUUID
 		var cursorAt sql.NullTime
-		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.OwnerID, &g.Role, &g.CreatedAt, &cursorID, &cursorAt, &g.Pinned); err != nil {
 			return nil, fmt.Errorf("group: scan: %w", err)
 		}
 		if cursorID.Valid {
@@ -274,6 +285,31 @@ func (s *store) advanceReadCursor(
 	`, groupID, userID, messageID, messageCreatedAt)
 	if err != nil {
 		return fmt.Errorf("group: advance read cursor: %w", err)
+	}
+	return nil
+}
+
+// pinGroup records the caller's own pin, idempotently: pinning an
+// already-pinned group must not fail or move its pinned_at.
+func (s *store) pinGroup(ctx context.Context, userID, groupID uuid.UUID, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO group_pins (user_id, group_id, pinned_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (user_id, group_id) DO NOTHING
+	`, userID, groupID, now)
+	if err != nil {
+		return fmt.Errorf("group: pin: %w", err)
+	}
+	return nil
+}
+
+// unpinGroup removes the caller's own pin, idempotently: unpinning a group
+// that was never pinned is not an error.
+func (s *store) unpinGroup(ctx context.Context, userID, groupID uuid.UUID) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM group_pins WHERE user_id = $1 AND group_id = $2`, userID, groupID)
+	if err != nil {
+		return fmt.Errorf("group: unpin: %w", err)
 	}
 	return nil
 }

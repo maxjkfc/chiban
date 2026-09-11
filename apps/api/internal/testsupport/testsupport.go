@@ -286,6 +286,7 @@ type Group struct {
 	IsOwner     bool   `json:"is_owner"`
 	UnreadCount int    `json:"unread_count"`
 	HasUnread   bool   `json:"has_unread"`
+	Pinned      bool   `json:"pinned"`
 }
 
 // Invite is the invite shape the API returns.
@@ -397,6 +398,21 @@ func (a *App) JoinGroup(code string) Group {
 	var g Group
 	a.DecodeJSON(resp, &g)
 	return g
+}
+
+// PinGroup pins a group as the current user, returning the raw response so
+// tests can assert on rejections as well as successes.
+func (a *App) PinGroup(groupID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodPost, "/api/v1/groups/"+groupID+"/pin", nil)
+}
+
+// UnpinGroup unpins a group as the current user, returning the raw response.
+func (a *App) UnpinGroup(groupID string) *http.Response {
+	a.t.Helper()
+
+	return a.Request(http.MethodDelete, "/api/v1/groups/"+groupID+"/pin", nil)
 }
 
 // Meal is the meal shape the API returns.
