@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   canShiftTrophyAnchor,
   calendarCells,
+  clampDateRangeToBounds,
+  dateRangeDates,
   isDailySummaryRangeWithinLimit,
   monthRange,
   shiftMonth,
@@ -44,6 +46,19 @@ test("keeps trophy anchors inside the 92-day navigation boundary", () => {
   assert.equal(canShiftTrophyAnchor("2026-08-20", -1, "2026-08-20"), true);
   assert.equal(canShiftTrophyAnchor("2026-05-20", -1, "2026-08-20"), false);
   assert.equal(canShiftTrophyAnchor("2026-11-20", 1, "2026-08-20"), false);
+});
+
+test("clamps trophy windows so every rendered date is a valid anchor", () => {
+  const bounds = trophyAnchorBounds("2026-08-20");
+
+  assert.deepEqual(
+    dateRangeDates(clampDateRangeToBounds(weekRange(bounds.start), bounds)),
+    ["2026-05-20", "2026-05-21", "2026-05-22", "2026-05-23"],
+  );
+  assert.deepEqual(
+    dateRangeDates(clampDateRangeToBounds(weekRange(bounds.end), bounds)),
+    ["2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"],
+  );
 });
 
 test("never builds a daily-summary request larger than the backend limit", () => {

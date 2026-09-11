@@ -33,6 +33,7 @@ import {
 import {
   calendarCells,
   canShiftTrophyAnchor,
+  clampDateRangeToBounds,
   dateRangeDates,
   isDailySummaryRangeWithinLimit,
   monthRange,
@@ -199,8 +200,8 @@ export default function TodayPage() {
   const summaryByDate = new Map(
     (visibleSummary?.days ?? []).map((summaryDay) => [summaryDay.date, summaryDay]),
   );
-  const trophyDates = selectedDate
-    ? dateRangeDates(weekRange(selectedDate))
+  const trophyDates = selectedDate && trophyBounds
+    ? dateRangeDates(clampDateRangeToBounds(weekRange(selectedDate), trophyBounds))
     : [];
   const selectDate = (next: string | null) => {
     let normalized = next;

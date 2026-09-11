@@ -57,6 +57,14 @@ export function trophyAnchorBounds(today: string): DateRange {
   };
 }
 
+/** Clips an inclusive display range to the dates that may be trophy anchors. */
+export function clampDateRangeToBounds(range: DateRange, bounds: DateRange): DateRange {
+  return {
+    start: range.start < bounds.start ? bounds.start : range.start,
+    end: range.end > bounds.end ? bounds.end : range.end,
+  };
+}
+
 export function isTrophyAnchorInBounds(anchor: string, today: string): boolean {
   const bounds = trophyAnchorBounds(today);
   return anchor >= bounds.start && anchor <= bounds.end;
