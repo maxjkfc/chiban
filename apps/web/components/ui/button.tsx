@@ -44,24 +44,31 @@ const buttonVariants = cva(
   },
 );
 
-function Button({
-  className,
-  variant = "default",
-  size = "default",
-  asChild = false,
-  loading = false,
-  children,
-  ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-    /** Shows a spinner and blocks input; every submit in the app awaits an API call. */
-    loading?: boolean;
-  }) {
+const Button = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<"button"> &
+    VariantProps<typeof buttonVariants> & {
+      asChild?: boolean;
+      /** Shows a spinner and blocks input; every submit in the app awaits an API call. */
+      loading?: boolean;
+    }
+>(function Button(
+  {
+    className,
+    variant = "default",
+    size = "default",
+    asChild = false,
+    loading = false,
+    children,
+    ...props
+  },
+  ref,
+) {
   const Comp = asChild ? Slot.Root : "button";
 
   return (
     <Comp
+      ref={ref}
       data-slot="button"
       data-variant={variant}
       data-size={size}
@@ -87,6 +94,7 @@ function Button({
       )}
     </Comp>
   );
-}
+});
+Button.displayName = "Button";
 
 export { Button, buttonVariants };

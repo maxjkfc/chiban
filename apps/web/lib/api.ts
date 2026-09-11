@@ -114,7 +114,21 @@ export type Group = {
   is_owner: boolean;
   unread_count?: number;
   has_unread?: boolean;
+  /** Whether this group is in the caller's persisted quick-access rail. */
+  pinned?: boolean;
 };
+
+/** Adds a group to the caller's persisted quick-access rail. */
+export function pinGroup(groupId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/groups/${groupId}/pin`, { method: "POST" });
+}
+
+/** Removes a group from the caller's persisted quick-access rail. */
+export function unpinGroup(groupId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/groups/${groupId}/pin`, {
+    method: "DELETE",
+  });
+}
 
 export function markGroupRead(
   groupId: string,

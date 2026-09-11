@@ -260,3 +260,29 @@ export function addGroupToUnreadState(
     pendingUnread: state.pendingUnread,
   };
 }
+
+/** Applies a local group mutation without losing unread or realtime state. */
+export function replaceGroupInUnreadState(
+  state: UnreadState,
+  group: Group,
+): UnreadState {
+  const revision = state.revision + 1;
+  return {
+    ...state,
+    groups: state.groups
+      ? state.groups.map((current) =>
+          current.id === group.id ? group : current,
+        )
+      : state.groups,
+    revision,
+    groupRevisions: {
+      ...state.groupRevisions,
+      [group.id]: (state.groupRevisions[group.id] ?? 0) + 1,
+    },
+    overrides: {
+      ...state.overrides,
+      [group.id]: { group, revision },
+    },
+    pendingUnread: state.pendingUnread,
+  };
+}

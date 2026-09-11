@@ -17,6 +17,7 @@ import {
   GROUP_MESSAGE_EVENT,
   recordGlobalGroupMessage,
   recordGroupMessage,
+  replaceGroupInUnreadState,
   unreadGroupRevision,
   unreadRefreshRevision,
   type GroupMessageEventDetail,
@@ -28,6 +29,7 @@ export type UnreadContextValue = {
   error: boolean;
   refreshGroups: (signal?: AbortSignal) => Promise<void>;
   addGroup: (group: Group) => void;
+  replaceGroup: (group: Group) => void;
   /** Reflect a realtime message before a best-effort mark-read request. */
   noteGroupMessage: (groupId: string, isOwnMessage?: boolean) => void;
   markGroupRead: (groupId: string, messageId: string) => Promise<boolean>;
@@ -138,6 +140,10 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
     setState((current) => addGroupToUnreadState(current, group));
   }, []);
 
+  const replaceGroup = useCallback((group: Group) => {
+    setState((current) => replaceGroupInUnreadState(current, group));
+  }, []);
+
   const noteGroupMessage = useCallback(
     (groupId: string, isOwnMessage = false) => {
       setState((current) =>
@@ -177,10 +183,19 @@ export function UnreadProvider({ children }: { children: React.ReactNode }) {
       error: state.error,
       refreshGroups,
       addGroup,
+      replaceGroup,
       noteGroupMessage,
       markGroupRead,
     }),
-    [state.groups, state.error, refreshGroups, addGroup, noteGroupMessage, markGroupRead],
+    [
+      state.groups,
+      state.error,
+      refreshGroups,
+      addGroup,
+      replaceGroup,
+      noteGroupMessage,
+      markGroupRead,
+    ],
   );
 
   return <UnreadContext.Provider value={value}>{children}</UnreadContext.Provider>;
