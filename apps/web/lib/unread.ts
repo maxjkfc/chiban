@@ -260,3 +260,34 @@ export function addGroupToUnreadState(
     pendingUnread: state.pendingUnread,
   };
 }
+
+/** Updates only the pin flag from the provider's current group snapshot. */
+export function updateGroupPinnedInUnreadState(
+  state: UnreadState,
+  groupId: string,
+  pinned: boolean,
+): UnreadState {
+  const current =
+    state.overrides[groupId]?.group ??
+    state.groups?.find((group) => group.id === groupId);
+  if (!current || current.pinned === pinned) return state;
+
+  const updated: Group = { ...current, pinned };
+  const revision = state.revision + 1;
+  return {
+    ...state,
+    groups: state.groups?.map((group) =>
+      group.id === groupId ? updated : group,
+    ) ?? state.groups,
+    revision,
+    groupRevisions: {
+      ...state.groupRevisions,
+      [groupId]: (state.groupRevisions[groupId] ?? 0) + 1,
+    },
+    overrides: {
+      ...state.overrides,
+      [groupId]: { group: updated, revision },
+    },
+    pendingUnread: state.pendingUnread,
+  };
+}

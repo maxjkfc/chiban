@@ -18,17 +18,16 @@ const variants = {
     "ruled h-7 rounded-none border-0 bg-transparent px-0 leading-[1.6875rem] focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring aria-invalid:text-destructive",
 } as const;
 
-function Input({
-  className,
-  type,
-  variant = "box",
-  ...props
-}: React.ComponentProps<"input"> & {
-  /** `ruled` swaps the box for a notebook rule. See DESIGN_SYSTEM.md. */
-  variant?: keyof typeof variants;
-}) {
+const Input = React.forwardRef<
+  HTMLInputElement,
+  React.ComponentProps<"input"> & {
+    /** `ruled` swaps the box for a notebook rule. See DESIGN_SYSTEM.md. */
+    variant?: keyof typeof variants;
+  }
+>(function Input({ className, type, variant = "box", ...props }, ref) {
   return (
     <input
+      ref={ref}
       type={type}
       data-slot="input"
       data-variant={variant}
@@ -40,6 +39,7 @@ function Input({
       {...props}
     />
   );
-}
+});
+Input.displayName = "Input";
 
 export { Input };

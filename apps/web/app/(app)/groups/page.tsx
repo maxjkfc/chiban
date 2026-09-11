@@ -1,7 +1,13 @@
 "use client";
 
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  PinIcon,
+  PlusIcon,
+  XIcon,
+} from "lucide-react";
 import Link from "next/link";
+import { Dialog } from "radix-ui";
 import { useState } from "react";
 
 import { Tape, tapePlacement, tapeTone, tiltClass } from "@/components/tape";
@@ -11,17 +17,40 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Message } from "@/components/ui/message";
-import { apiFetch, ApiRequestError, type Group } from "@/lib/api";
+import {
+  apiFetch,
+  ApiRequestError,
+  pinGroup,
+  unpinGroup,
+  type Group,
+} from "@/lib/api";
+import { pinnedGroups } from "@/lib/groups-page-state.mts";
 import { cn } from "@/lib/utils";
 import { groupHasUnread } from "@/lib/unread";
 
 export default function GroupsPage() {
-  const { groups, error: groupsError, addGroup } = useUnreadGroups();
+  const {
+    groups,
+    error: groupsError,
+    addGroup,
+    setGroupPinned,
+  } = useUnreadGroups();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [pinningGroupId, setPinningGroupId] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
-  async function handleCreate(event: React.SyntheticEvent) {
+  function handleCreateModalChange(open: boolean, force = false) {
+    if (!open && submitting && !force) return;
+    setShowCreateModal(open);
+    if (!open) {
+      setName("");
+      setError(null);
+    }
+  }
+
+  async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
@@ -32,7 +61,7 @@ export default function GroupsPage() {
         body: { name },
       });
       addGroup(created);
-      setName("");
+      handleCreateModalChange(false, true);
     } catch (caught) {
       setError(
         caught instanceof ApiRequestError
@@ -44,13 +73,56 @@ export default function GroupsPage() {
     }
   }
 
+  async function handlePinToggle(group: Group) {
+    const nextPinned = group.pinned !== true;
+    setError(null);
+    setGroupPinned(group.id, nextPinned);
+    setPinningGroupId(group.id);
+
+    try {
+      if (nextPinned) {
+        await pinGroup(group.id);
+      } else {
+        await unpinGroup(group.id);
+      }
+    } catch (caught) {
+      setGroupPinned(group.id, !nextPinned);
+      setError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : "無法連線，請稍後再試",
+      );
+    } finally {
+      setPinningGroupId(null);
+    }
+  }
+
+  const quickGroups = groups ? pinnedGroups(groups) : [];
+
   return (
-    <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
-      <header className="flex flex-col gap-1">
-        <h1>群組</h1>
-        <p className="text-muted-foreground text-sm">
-          只有被邀請的人看得到裡面的餐。
-        </p>
+    <Dialog.Root open={showCreateModal} onOpenChange={handleCreateModalChange}>
+      <main className="flex flex-1 flex-col gap-5 px-5 pt-7 pb-5">
+      <header className="flex items-start gap-4">
+        <div className="flex flex-1 flex-col gap-1">
+          <h1>群組</h1>
+          <p className="text-muted-foreground text-sm">
+            只有被邀請的人看得到裡面的餐。
+          </p>
+        </div>
+        <Dialog.Trigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="建立群組"
+            aria-haspopup="dialog"
+            aria-expanded={showCreateModal}
+            aria-controls="create-group-dialog"
+            title="建立群組"
+            onClick={() => setError(null)}
+          >
+            <PlusIcon aria-hidden />
+          </Button>
+        </Dialog.Trigger>
       </header>
 
       {groups === null ? (
@@ -62,65 +134,140 @@ export default function GroupsPage() {
           還沒有群組。建立一個，再把邀請連結傳給朋友。
         </p>
       ) : (
-        <ul className="flex flex-col gap-4">
-          {groups.map((group, index) => (
-            <li key={group.id}>
-              {/* An index card with a strip of tape, not a table row: the
-                  group is a place you go, and it should look like an object. */}
-              <Link
-                href={`/groups/${group.id}`}
-                className={cn(
-                  "polaroid relative flex items-center gap-3 p-4 transition-transform active:scale-[0.99]",
-                  tiltClass(index),
-                )}
-              >
-                <Tape tone={tapeTone(index)} className={tapePlacement(index)} />
-                <span className="font-heading flex-1 text-lg font-black">
-                  {group.name}
-                </span>
-                {groupHasUnread(group) ? (
-                  <UnreadBadge
-                    count={group.unread_count ?? 1}
-                    showCount
-                    label={`${group.name}有未讀訊息`}
-                  />
-                ) : null}
-                {group.is_owner ? (
-                  <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs font-bold">
-                    管理者
-                  </span>
-                ) : null}
-                <ChevronRightIcon
-                  className="text-muted-foreground size-4"
-                  aria-hidden
-                />
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <>
+          {quickGroups.length > 0 ? (
+            <section className="flex flex-col gap-3" aria-labelledby="pinned-groups-title">
+              <div className="flex items-center gap-2">
+                <PinIcon className="text-primary-ink size-4" aria-hidden />
+                <h2 id="pinned-groups-title" className="text-sm">
+                  已釘選頻道
+                </h2>
+              </div>
+              <ul className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-2">
+                {quickGroups.map((group) => (
+                  <li key={group.id} className="min-w-40 snap-start">
+                    <Link
+                      href={`/groups/${group.id}`}
+                      className="card-surface flex min-h-20 items-center gap-2 p-3 transition-transform active:scale-[0.98]"
+                    >
+                      <span className="bg-secondary flex size-9 shrink-0 items-center justify-center rounded-full">
+                        <PinIcon className="text-secondary-foreground size-4" aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-bold">
+                          {group.name}
+                        </span>
+                        <span className="text-muted-foreground text-xs">進入聊天</span>
+                      </span>
+                      <ChevronRightIcon className="text-muted-foreground size-4" aria-hidden />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          <ul className="flex flex-col gap-4">
+            {groups.map((group, index) => (
+              <li key={group.id}>
+                <div
+                  className={cn(
+                    "polaroid relative flex items-center gap-2 p-2 transition-transform",
+                    tiltClass(index),
+                  )}
+                >
+                  <Tape tone={tapeTone(index)} className={tapePlacement(index)} />
+                  <Link
+                    href={`/groups/${group.id}`}
+                    className="flex min-w-0 flex-1 items-center gap-3 p-2 active:scale-[0.99]"
+                  >
+                    <span className="font-heading min-w-0 flex-1 truncate text-lg font-black">
+                      {group.name}
+                    </span>
+                    {groupHasUnread(group) ? (
+                      <UnreadBadge
+                        count={group.unread_count ?? 1}
+                        showCount
+                        label={`${group.name}有未讀訊息`}
+                      />
+                    ) : null}
+                    {group.is_owner ? (
+                      <span className="bg-accent text-accent-foreground rounded-full px-2.5 py-1 text-xs font-bold">
+                        管理者
+                      </span>
+                    ) : null}
+                    <ChevronRightIcon
+                      className="text-muted-foreground size-4"
+                      aria-hidden
+                    />
+                  </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={group.pinned === true ? `取消釘選${group.name}` : `釘選${group.name}`}
+                    aria-pressed={group.pinned === true}
+                    loading={pinningGroupId === group.id}
+                    disabled={pinningGroupId !== null && pinningGroupId !== group.id}
+                    onClick={() => void handlePinToggle(group)}
+                  >
+                    <PinIcon aria-hidden />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
-      <form onSubmit={handleCreate} className="card-surface flex flex-col gap-3">
-        <Label htmlFor="group-name" className="text-muted-foreground text-xs tracking-[0.06em]">
-          開一個新的
-        </Label>
-        <Input
-          id="group-name"
-          variant="ruled"
-          required
-          maxLength={50}
-          placeholder="例如：週五宵夜"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        {error && groups !== null ? (
-          <Message tone="error">{error}</Message>
-        ) : null}
-        <Button type="submit" loading={submitting}>
-          <PlusIcon aria-hidden />
-          {submitting ? "建立中…" : "建立群組"}
-        </Button>
-      </form>
-    </main>
+      {error && groups !== null ? <Message tone="error">{error}</Message> : null}
+      </main>
+
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/30" />
+        <Dialog.Content
+          id="create-group-dialog"
+          className="bg-card fixed inset-x-4 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-auto max-w-md -translate-y-1/2 overflow-y-auto rounded-2xl border p-5 shadow-2xl sm:left-1/2 sm:right-auto sm:w-full sm:-translate-x-1/2"
+        >
+          <div className="mb-5 flex items-start gap-3">
+            <div className="flex-1">
+              <Dialog.Title className="text-xl">建立群組</Dialog.Title>
+              <Dialog.Description className="text-muted-foreground mt-1 text-sm">
+                建立後就可以邀請朋友一起記錄。
+              </Dialog.Description>
+            </div>
+            <Dialog.Close asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="關閉建立群組視窗"
+                disabled={submitting}
+              >
+                <XIcon aria-hidden />
+              </Button>
+            </Dialog.Close>
+          </div>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="group-name">群組名稱</Label>
+              <Input
+                id="group-name"
+                variant="ruled"
+                required
+                maxLength={50}
+                placeholder="例如：週五宵夜"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            {error ? <Message tone="error">{error}</Message> : null}
+            <Button type="submit" loading={submitting} disabled={submitting}>
+              <PlusIcon aria-hidden />
+              {submitting ? "建立中…" : "建立群組"}
+            </Button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
