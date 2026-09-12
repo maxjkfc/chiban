@@ -355,12 +355,42 @@ Unless explicitly changed by the current task, follow the V0.1 phases in `docs/M
 7. Chat Media + GIF + Sticker
 8. UX Polish / MVP Validation
 
-## Framework-specific orchestration
+## Kanban / PM Orchestration (mini-pm)
 
-> This repo may be worked on by different agent frameworks on different machines. The rules
-> above this section are framework-agnostic project rules that any agent should follow.
-> Framework-specific orchestration details (worker/profile naming, task systems, review
-> pipelines) live in `docs/orchestration/<framework>.md`, not in this file.
->
-> Existing framework orchestration docs:
-> - `docs/orchestration/hermes-kanban.md` (Hermes)
+Ported from the japan-shopping-list project's proven orchestration rules (2026-09-08).
+
+- **Issue-first workflow**: any user-facing "new feature"-level requirement must first get a
+  GitHub issue (repo `maxjkfc/chiban`, label `enhancement`) with a problem statement, scope, and
+  an Acceptance Criteria checklist, BEFORE kanban tasks are created. Every derived kanban task
+  body must reference the issue (`GitHub Issue: #N`), and PR bodies use `Closes #N` (complete) or
+  `Refs #N` (partial/dependency). Pure bug fixes / review-fix rounds tied to an existing PR/task
+  chain do not need a new issue; a user-reported bug that needs independent tracking gets a `bug`
+  issue first.
+- **Review routing**: a PR's FIRST review round always gets both reviewer-claude and
+  reviewer-gpt independently (never let one reviewer's summary leak into the other's task).
+  Every subsequent "small fix" round responding to prior review comments only needs a single
+  reviewer-gpt pass; Approve there merges directly. Only pull back to dual review if reviewer-gpt
+  Request Changes or the issue looks significant/uncertain.
+- **Event-driven review->merge chain, built in one shot at task-creation time, not
+  backfilled after the fact**: whenever mini-pm creates a task that will produce/update a PR
+  (implementer OR fix/repair task), it must in the SAME operation also create the follow-up
+  review task(s) (`--parent <that task>`) and the decision/merge task (`--parent <review
+  task(s)>`), and subscribe the decision task to notify (see below). Do not wait for the task to
+  finish before deciding what comes next — pre-chain the whole
+  dev/fix -> review -> decision/merge sequence up front so dispatcher auto-promotes every stage
+  with zero manual follow-up. (Root cause of a real incident on japan-shopping-list: a fix task
+  was created without its follow-up review pre-chained, and the PR sat "fixed but unreviewed"
+  for ~2.5 hours until the user asked for a status update.)
+- **Notify-subscribe every decision/rollup task**: `hermes kanban notify-subscribe <task_id>
+  --platform discord --chat-id <chiban project channel/thread id> --delivery-mode notify` right
+  after creating any decision/merge/rollup task — subscriptions are per-task, not per-board, so
+  this must be repeated for every new decision task.
+- **Board-wide safety-net cron, not a hardcoded task-id watchlist**: the monitoring cron script
+  must scan the WHOLE board (`hermes kanban list`) for actionable signals — blocked tasks,
+  completed review tasks needing a merge decision, and completed fix/repair tasks that may be
+  missing their pre-chained follow-up review (safety net for the rule above) — rather than
+  polling a fixed list of task IDs. A hardcoded ID list silently stops covering new tasks the
+  moment they're created. Keep it wakeAgent-gated (script emits `{"wakeAgent": true/false}`) so a
+  no-op tick costs $0. One merged cron per project (not one job per concern) is preferred to
+  minimize scheduler wake-ups; 30 minutes is an adequate default interval since the real
+  review->merge path is event-driven, not cron-driven — the cron is purely a backstop.
